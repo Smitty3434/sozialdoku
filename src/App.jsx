@@ -1,5 +1,12 @@
 import { useState, useEffect, useRef } from "react";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+// ── Supabase ──────────────────────────────────────────────────────
+const SUPABASE_URL = "https://bketznljcsrhufcvszsj.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJrZXR6bmxqY3NyaHVmY3ZzenNqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY2MTU1MDAsImV4cCI6MjA5MjE5MTUwMH0.PVyg8g4sBOKZCt3VFDwVGXO2X1JNbeavBd5ZMaOMx1E";
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
+
+// ── Fonts ──────────────────────────────────────────────────────────
 const FontLoader = () => {
   useEffect(() => {
     const link = document.createElement("link");
@@ -10,128 +17,10 @@ const FontLoader = () => {
   return null;
 };
 
-const MOCK_USERS = [
-  { id: 1, name: "Anna Müller", email: "demo@sozialdoku.de", password: "demo123", rolle: "Admin", einrichtung: "AWO Zentrum Nord", aktiv: true, avatar: "AM" },
-  { id: 2, name: "Ben Koch", email: "b.koch@sozialdoku.de", password: "demo123", rolle: "Fachkraft", einrichtung: "AWO Zentrum Nord", aktiv: true, avatar: "BK" },
-  { id: 3, name: "Clara Weber", email: "c.weber@sozialdoku.de", password: "demo123", rolle: "Leitung", einrichtung: "Caritas Süd", aktiv: true, avatar: "CW" },
-  { id: 4, name: "David Braun", email: "d.braun@sozialdoku.de", password: "demo123", rolle: "Fachkraft", einrichtung: "DRK Mitte", aktiv: false, avatar: "DB" },
-];
-
-const MOCK_CLIENTS = [
-  { id: 1, name: "Maria Schreiber", dob: "1978-03-14", einrichtung: "AWO Zentrum Nord", status: "aktiv", aktenzeichen: "2024-0041" },
-  { id: 2, name: "Thomas Brandl", dob: "1965-11-02", einrichtung: "Caritas Süd", status: "aktiv", aktenzeichen: "2024-0055" },
-  { id: 3, name: "Sandra Hoffmann", dob: "1990-07-28", einrichtung: "AWO Zentrum Nord", status: "abgeschlossen", aktenzeichen: "2023-0182" },
-  { id: 4, name: "Klaus Nauer", dob: "1955-01-19", einrichtung: "DRK Mitte", status: "aktiv", aktenzeichen: "2024-0067" },
-  { id: 5, name: "Yuki Tanaka", dob: "2001-05-09", einrichtung: "Caritas Süd", status: "aktiv", aktenzeichen: "2024-0073" },
-];
-
-const MOCK_EINTRAEGE = {
-  1: [
-    { id: 1, datum: "2025-03-10", typ: "Fallverlauf", titel: "Erstgespräch", text: "Erstkontakt hergestellt. Bedarfsermittlung durchgeführt.", fachkraft: "Anna Müller" },
-    { id: 2, datum: "2025-03-18", typ: "Maßnahme", titel: "Hilfeplan erstellt", text: "Individueller Hilfeplan für 6 Monate erarbeitet.", fachkraft: "Anna Müller" },
-    { id: 3, datum: "2025-04-02", typ: "Stunden", titel: "Begleitung Behördengang", text: "3,5 Stunden Begleitung Amt für Soziales.", fachkraft: "Ben Koch", stunden: 3.5 },
-  ],
-  2: [{ id: 4, datum: "2025-02-20", typ: "Fallverlauf", titel: "Verlaufsdokumentation", text: "Fortschritte in der Selbstständigkeit dokumentiert.", fachkraft: "Clara Weber" }],
-  3: [], 4: [{ id: 5, datum: "2025-04-01", typ: "Stunden", titel: "Hausbesuch", text: "2 Stunden Unterstützung im Haushalt.", fachkraft: "Anna Müller", stunden: 2 }], 5: [],
-};
-
-
-const createEmptyFallakte = (client) => ({
-  klient: {
-    telefon: "",
-    email: "",
-    adresse: "",
-    hilfeart: "Erziehungsbeistand",
-    beginnHilfe: ds(new Date()),
-    bezugspersonen: "",
-    besondereHinweise: "",
-  },
-  aufgaben: [],
-  intern: [],
-  extern: [],
-  ziele: [],
-  dateien: [],
-  fachbereiche: {
-    soziales: [],
-    gesundheit: [],
-    bildungBeruf: [],
-    finanzen: [],
-    behoerden: [],
-    freizeit: [],
-  },
-});
-
-const MOCK_FALLAKTEN = {
-  1: {
-    klient: {
-      telefon: "040 1234567",
-      email: "m.schreiber@example.de",
-      adresse: "Musterweg 12, 22081 Hamburg",
-      hilfeart: "Erziehungsbeistand",
-      beginnHilfe: "2025-01-15",
-      bezugspersonen: "Mutter, Klassenlehrerin Frau K.",
-      besondereHinweise: "Regelmäßige schulische Rückmeldungen erforderlich.",
-    },
-    aufgaben: [
-      { id: 1, titel: "Schulgespräch terminieren", status: "offen", notiz: "Rückmeldung bis Freitag einholen." },
-      { id: 2, titel: "Bewerbungsunterlagen prüfen", status: "in Bearbeitung", notiz: "Lebenslauf aktualisieren." },
-    ],
-    intern: [
-      { id: 1, name: "Ben Koch", rolle: "Bezugsbetreuer", telefon: "040 555000", email: "b.koch@sozialdoku.de" },
-    ],
-    extern: [
-      { id: 1, name: "Frau V.", stelle: "ASD Hamburg-Mitte", telefon: "040 111222", email: "frau.v@example.de" },
-      { id: 2, name: "Herr Nielson", stelle: "Klassenlehrer", telefon: "", email: "andre.nielson@example.de" },
-    ],
-    ziele: [
-      { id: 1, titel: "Schulbesuch stabilisieren", status: "laufend", notiz: "Pünktliche Teilnahme an mindestens 4 von 5 Schultagen pro Woche." },
-      { id: 2, titel: "Bewerbungsfähigkeit ausbauen", status: "laufend", notiz: "Erstellung einer vollständigen Bewerbungsmappe." },
-    ],
-    dateien: [
-      { id: 1, name: "Hilfeplan 03-2025.pdf", kategorie: "Verfügung/Jugendamt", datum: "2025-03-20" },
-      { id: 2, name: "Bewerbung Praktikum.docx", kategorie: "Bewerbung", datum: "2025-04-03" },
-    ],
-    fachbereiche: {
-      soziales: [{ id: 1, titel: "Gespräch mit Mutter", text: "Austausch zur aktuellen Konfliktlage im Haushalt. Weitere Entlastung besprochen.", datum: "2025-04-15", autor: "Ben Koch" }],
-      gesundheit: [{ id: 1, titel: "Arzttermin vorbereitet", text: "Unterlagen für PIA-Termin zusammengestellt und mit der Jugendlichen besprochen.", datum: "2025-04-12", autor: "Ben Koch" }],
-      bildungBeruf: [{ id: 1, titel: "Rückmeldung Schule", text: "Lehrkraft berichtet von schwankender, zuletzt aber verbesserter Teilnahme.", datum: "2025-04-17", autor: "Ben Koch" }],
-      finanzen: [],
-      behoerden: [{ id: 1, titel: "ASD informiert", text: "Kurze telefonische Rückmeldung zum aktuellen Verlauf gegeben.", datum: "2025-04-16", autor: "Ben Koch" }],
-      freizeit: [],
-    },
-  },
-};
-
-const FACHBEREICH_LABELS = {
-  soziales: "Soziales",
-  gesundheit: "Gesundheit",
-  bildungBeruf: "Bildung/Beruf",
-  finanzen: "Finanzen",
-  behoerden: "Behörden",
-  freizeit: "Freizeit",
-};
-
-const FACHBEREICH_FARBEN = {
-  soziales: "#fb923c",
-  gesundheit: "#22c55e",
-  bildungBeruf: "#8b5cf6",
-  finanzen: "#3b82f6",
-  behoerden: "#92400e",
-  freizeit: "#ec4899",
-};
-
-const td = new Date();
-const ds = (d) => d.toISOString().split("T")[0];
-const MOCK_TERMINE = [
-  { id: 1, titel: "Hilfeplan-Gespräch", datum: ds(new Date(td.getFullYear(), td.getMonth(), td.getDate()+2)), uhrzeit: "10:00", klientId: 1, fachkraft: "Anna Müller", ort: "Büro 3", notiz: "Unterlagen vorbereiten", erinnerung: true },
-  { id: 2, titel: "Hausbesuch Klaus Nauer", datum: ds(new Date(td.getFullYear(), td.getMonth(), td.getDate()+5)), uhrzeit: "14:30", klientId: 4, fachkraft: "Ben Koch", ort: "Beim Klienten", notiz: "", erinnerung: false },
-  { id: 3, titel: "Teambesprechung", datum: ds(new Date(td.getFullYear(), td.getMonth(), td.getDate()+1)), uhrzeit: "09:00", klientId: null, fachkraft: "Anna Müller", ort: "Konferenzraum", notiz: "Quartalsbericht", erinnerung: true },
-];
-
+// ── Constants ─────────────────────────────────────────────────────
 const EINRICHTUNGEN = ["AWO Zentrum Nord", "Caritas Süd", "DRK Mitte", "Diakonie West"];
 const ROLLEN = ["Admin", "Leitung", "Fachkraft"];
 const ROLLEN_FARBEN = { Admin: { bg: "#fce7f3", color: "#9d174d" }, Leitung: { bg: "#e0e7ff", color: "#3730a3" }, Fachkraft: { bg: "#dcfce7", color: "#166534" } };
-
 const VORLAGEN = [
   { id: 1, typ: "Fallverlauf", titel: "Erstgespräch", text: "Erstkontakt mit Klient/in hergestellt. Aktuelle Lebenssituation besprochen. Unterstützungsbedarf ermittelt. Nächste Schritte vereinbart." },
   { id: 2, typ: "Fallverlauf", titel: "Verlaufsgespräch", text: "Regelmäßiges Verlaufsgespräch durchgeführt. Aktuelle Situation besprochen. Fortschritte dokumentiert. Hilfeplan überprüft und ggf. angepasst." },
@@ -140,35 +29,49 @@ const VORLAGEN = [
   { id: 5, typ: "Stunden", titel: "Begleitung Behördengang", text: "Klient/in zu Behörde begleitet. Erforderliche Unterlagen vorbereitet und eingereicht. Sachverhalt gemeinsam mit Sachbearbeitung besprochen." },
   { id: 6, typ: "Stunden", titel: "Hausbesuch", text: "Hausbesuch durchgeführt. Wohnsituation begutachtet. Unterstützungsbedarf im Haushalt besprochen. Vereinbarungen für weitere Maßnahmen getroffen." },
 ];
+const NOTIZ_FARBEN = {
+  gelb:  { bg: "#fef9c3", border: "#f59e0b", label: "Gelb" },
+  rot:   { bg: "#fee2e2", border: "#ef4444", label: "Rot" },
+  gruen: { bg: "#dcfce7", border: "#22c55e", label: "Grün" },
+  blau:  { bg: "#dbeafe", border: "#3b82f6", label: "Blau" },
+  lila:  { bg: "#ede9fe", border: "#8b5cf6", label: "Lila" },
+};
 
-const formatDate = (d) => new Date(d).toLocaleDateString("de-DE");
-const typeColor = (t) => ({ Fallverlauf: "#2563a8", Maßnahme: "#16825a", Stunden: "#b45309" }[t] || "#555");
-const typBg = (t) => ({ Fallverlauf: "#e8f0fb", Maßnahme: "#e6f7f0", Stunden: "#fef3c7" }[t] || "#f3f4f6");
+// ── Helpers ───────────────────────────────────────────────────────
+const td = new Date();
+const ds = (d) => d.toISOString().split("T")[0];
+const formatDate = (d) => d ? new Date(d).toLocaleDateString("de-DE") : "–";
+const typeColor = (t) => ({ Fallverlauf: "#2563a8", "Maßnahme": "#16825a", Massnahme: "#16825a", Stunden: "#b45309" }[t] || "#555");
+const typBg = (t) => ({ Fallverlauf: "#e8f0fb", "Maßnahme": "#e6f7f0", Massnahme: "#e6f7f0", Stunden: "#fef3c7" }[t] || "#f3f4f6");
 const rolleStyle = (r) => ROLLEN_FARBEN[r] || { bg: "#f1f5f9", color: "#475569" };
 
+// ── PDF Export ─────────────────────────────────────────────────────
 const exportPDF = (client, eintraege) => {
   const rows = eintraege.map(e => `<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:8px;color:#555">${formatDate(e.datum)}</td><td style="padding:8px"><span style="background:${typBg(e.typ)};color:${typeColor(e.typ)};padding:2px 8px;border-radius:4px;font-size:12px">${e.typ}</span></td><td style="padding:8px;font-weight:600">${e.titel}</td><td style="padding:8px;color:#555">${e.text}</td><td style="padding:8px;color:#555">${e.fachkraft}</td></tr>`).join("");
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bericht – ${client.name}</title><style>body{font-family:Arial,sans-serif;padding:40px;color:#1a1a2e}h1{color:#1a3a6e}table{width:100%;border-collapse:collapse}th{background:#1a3a6e;color:#fff;padding:10px;text-align:left}</style></head><body><h1>Dokumentation: ${client.name}</h1><p><strong>Aktenzeichen:</strong> ${client.aktenzeichen} | <strong>Einrichtung:</strong> ${client.einrichtung}</p><hr/><table><thead><tr><th>Datum</th><th>Typ</th><th>Titel</th><th>Beschreibung</th><th>Fachkraft</th></tr></thead><tbody>${rows || "<tr><td colspan='5' style='padding:16px;text-align:center'>Keine Einträge</td></tr>"}</tbody></table><p style="margin-top:40px;font-size:11px;color:#aaa">SozialDoku v2.0 · DSGVO-konform</p></body></html>`;
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bericht</title><style>body{font-family:Arial,sans-serif;padding:40px;color:#1a1a2e}h1{color:#1a3a6e}table{width:100%;border-collapse:collapse}th{background:#1a3a6e;color:#fff;padding:10px;text-align:left}</style></head><body><h1>Dokumentation: ${client.name}</h1><p><strong>Aktenzeichen:</strong> ${client.aktenzeichen} | <strong>Einrichtung:</strong> ${client.einrichtung}</p><hr/><table><thead><tr><th>Datum</th><th>Typ</th><th>Titel</th><th>Beschreibung</th><th>Fachkraft</th></tr></thead><tbody>${rows || "<tr><td colspan='5' style='padding:16px;text-align:center'>Keine Einträge</td></tr>"}</tbody></table><p style="margin-top:40px;font-size:11px;color:#aaa">SozialDoku · DSGVO-konform</p></body></html>`;
   const w = window.open("", "_blank"); w.document.write(html); w.document.close(); w.print();
 };
 
+// ══════════════════════════════════════════════════════════════════
+// MAIN APP — mit Supabase
+// ══════════════════════════════════════════════════════════════════
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
-  const [clients, setClients] = useState(MOCK_CLIENTS);
-  const [eintraege, setEintraege] = useState(MOCK_EINTRAEGE);
-  const [users, setUsers] = useState(MOCK_USERS);
-  const [termine, setTermine] = useState(MOCK_TERMINE);
+  const [clients, setClients] = useState([]);
+  const [eintraege, setEintraege] = useState({});
+  const [users, setUsers] = useState([]);
+  const [termine, setTermine] = useState([]);
+  const [notizen, setNotizen] = useState([]);
   const [selectedClient, setSelectedClient] = useState(null);
   const [search, setSearch] = useState("");
   const [newEintrag, setNewEintrag] = useState(null);
   const [showNewClient, setShowNewClient] = useState(false);
   const [toast, setToast] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-
-  const showToast = (msg, color = "#16825a") => { setToast({ msg, color }); setTimeout(() => setToast(null), 2800); };
-
+  const [notizPanel, setNotizPanel] = useState(false);
   const [kiSettings, setKiSettings] = useState({
     provider: "anthropic",
     ollamaUrl: "http://localhost:11434",
@@ -176,13 +79,184 @@ export default function App() {
     anonymisierung: true,
   });
 
-  const [notizen, setNotizen] = useState([
-    { id: 1, titel: "Teammeeting vorbereiten", text: "Tagesordnung: Hilfeplanung Schreiber, neue Klienten Q2, Urlaubsplanung", farbe: "gelb", typ: "team", autor: "Anna Müller", datum: ds(new Date()), pinned: true, tags: ["meeting", "dringend"] },
-    { id: 2, titel: "Unterlagen anfordern", text: "Krankenversicherungsnachweis von Thomas Brandl noch ausstehend.", farbe: "rot", typ: "persoenlich", autor: "Anna Müller", datum: ds(new Date()), pinned: false, tags: ["unterlagen", "dringend"] },
-    { id: 3, titel: "Gute Nachricht", text: "Klaus Nauer hat heute seine erste eigene Wohnung besichtigt — sehr positiver Schritt!", farbe: "gruen", typ: "team", autor: "Ben Koch", datum: ds(new Date()), pinned: false, tags: ["erfolg", "wohnen"] },
-  ]);
-  const [notizPanel, setNotizPanel] = useState(false);
-  const [fallakten, setFallakten] = useState(MOCK_FALLAKTEN);
+  const showToast = (msg, color = "#16825a") => { setToast({ msg, color }); setTimeout(() => setToast(null), 2800); };
+
+  // ── Auth: Session überwachen ────────────────────────────────────
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) loadUserProfile(session.user.id);
+      else setLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) loadUserProfile(session.user.id);
+      else { setUser(null); setLoading(false); }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // ── Profil laden ────────────────────────────────────────────────
+  const loadUserProfile = async (uid) => {
+    const { data, error } = await supabase.from("nutzer").select("*").eq("id", uid).single();
+    if (data) setUser(data);
+    setLoading(false);
+  };
+
+  // ── Daten laden nach Login ──────────────────────────────────────
+  useEffect(() => {
+    if (!session) return;
+    loadClients();
+    loadUsers();
+    loadTermine();
+    loadNotizen();
+  }, [session]);
+
+  const loadClients = async () => {
+    const { data } = await supabase.from("klienten").select("*").order("name");
+    if (data) {
+      setClients(data);
+      // Einträge für alle Klienten laden
+      const { data: eData } = await supabase.from("eintraege").select("*").order("datum", { ascending: false });
+      if (eData) {
+        const grouped = {};
+        eData.forEach(e => {
+          if (!grouped[e.klient_id]) grouped[e.klient_id] = [];
+          grouped[e.klient_id].push({ ...e, id: e.id, typ: e.typ === "Massnahme" ? "Maßnahme" : e.typ });
+        });
+        setEintraege(grouped);
+      }
+    }
+  };
+
+  const loadUsers = async () => {
+    const { data } = await supabase.from("nutzer").select("*").order("name");
+    if (data) setUsers(data);
+  };
+
+  const loadTermine = async () => {
+    const { data } = await supabase.from("termine").select("*").order("datum");
+    if (data) setTermine(data.map(t => ({ ...t, klientId: t.klient_id })));
+  };
+
+  const loadNotizen = async () => {
+    const { data } = await supabase.from("notizen").select("*").order("pinned", { ascending: false });
+    if (data) setNotizen(data.map(n => ({ ...n, klientId: n.klient_id })));
+  };
+
+  // ── CRUD: Klienten ──────────────────────────────────────────────
+  const addClient = async (clientData) => {
+    const { data, error } = await supabase.from("klienten").insert([{
+      name: clientData.name,
+      dob: clientData.dob || null,
+      einrichtung: clientData.einrichtung,
+      status: "aktiv",
+      aktenzeichen: clientData.aktenzeichen || "",
+      created_by: session.user.id,
+    }]).select().single();
+    if (data) {
+      setClients(prev => [...prev, data]);
+      setEintraege(prev => ({ ...prev, [data.id]: [] }));
+      showToast("Klient angelegt ✓");
+    }
+    if (error) showToast("Fehler beim Anlegen", "#c0392b");
+  };
+
+  // ── CRUD: Einträge ──────────────────────────────────────────────
+  const addEintrag = async (eintrag, klientId) => {
+    const { data, error } = await supabase.from("eintraege").insert([{
+      klient_id: klientId,
+      datum: eintrag.datum,
+      typ: eintrag.typ === "Maßnahme" ? "Massnahme" : eintrag.typ,
+      titel: eintrag.titel,
+      text: eintrag.text,
+      fachkraft: eintrag.fachkraft || user?.name || "",
+      stunden: eintrag.stunden ? parseFloat(eintrag.stunden) : null,
+      created_by: session.user.id,
+    }]).select().single();
+    if (data) {
+      const newE = { ...data, typ: data.typ === "Massnahme" ? "Maßnahme" : data.typ };
+      setEintraege(prev => ({ ...prev, [klientId]: [newE, ...(prev[klientId] || [])] }));
+      showToast("Eintrag gespeichert ✓");
+    }
+    if (error) showToast("Fehler beim Speichern", "#c0392b");
+  };
+
+  // ── CRUD: Termine ───────────────────────────────────────────────
+  const addTermin = async (termin) => {
+    const { data, error } = await supabase.from("termine").insert([{
+      titel: termin.titel,
+      datum: termin.datum,
+      uhrzeit: termin.uhrzeit,
+      klient_id: termin.klientId ? parseInt(termin.klientId) : null,
+      fachkraft: termin.fachkraft || user?.name || "",
+      ort: termin.ort || "",
+      notiz: termin.notiz || "",
+      erinnerung: termin.erinnerung || false,
+      created_by: session.user.id,
+    }]).select().single();
+    if (data) {
+      setTermine(prev => [...prev, { ...data, klientId: data.klient_id }]);
+      showToast("Termin gespeichert ✓");
+    }
+    if (error) showToast("Fehler beim Speichern", "#c0392b");
+  };
+
+  const deleteTermin = async (id) => {
+    await supabase.from("termine").delete().eq("id", id);
+    setTermine(prev => prev.filter(t => t.id !== id));
+    showToast("Termin gelöscht", "#64748b");
+  };
+
+  // ── CRUD: Notizen ───────────────────────────────────────────────
+  const addNotiz = async (notiz) => {
+    const { data, error } = await supabase.from("notizen").insert([{
+      titel: notiz.titel,
+      text: notiz.text || "",
+      farbe: notiz.farbe || "gelb",
+      typ: notiz.typ || "persoenlich",
+      klient_id: notiz.klientId ? parseInt(notiz.klientId) : null,
+      tags: notiz.tags || [],
+      pinned: notiz.pinned || false,
+      autor: user?.name || "",
+      created_by: session.user.id,
+    }]).select().single();
+    if (data) {
+      setNotizen(prev => [{ ...data, klientId: data.klient_id }, ...prev]);
+      showToast("Notiz gespeichert ✓");
+    }
+    if (error) showToast("Fehler beim Speichern", "#c0392b");
+  };
+
+  const updateNotiz = async (id, updates) => {
+    const { error } = await supabase.from("notizen").update(updates).eq("id", id);
+    if (!error) setNotizen(prev => prev.map(n => n.id === id ? { ...n, ...updates } : n));
+  };
+
+  const deleteNotiz = async (id) => {
+    await supabase.from("notizen").delete().eq("id", id);
+    setNotizen(prev => prev.filter(n => n.id !== id));
+    showToast("Notiz gelöscht", "#64748b");
+  };
+
+  // ── Nutzer verwalten (Admin) ────────────────────────────────────
+  const toggleNutzer = async (id, aktiv) => {
+    await supabase.from("nutzer").update({ aktiv }).eq("id", id);
+    setUsers(prev => prev.map(u => u.id === id ? { ...u, aktiv } : u));
+    showToast(aktiv ? "Nutzer aktiviert ✓" : "Nutzer deaktiviert", aktiv ? "#16825a" : "#c0392b");
+  };
+
+  // Notizen-Wrapper für Kompatibilität mit bestehenden Komponenten
+  const setNotizenCompat = (updater) => {
+    if (typeof updater === "function") {
+      setNotizen(prev => {
+        const next = updater(prev);
+        return next;
+      });
+    } else {
+      setNotizen(updater);
+    }
+  };
 
   const upcomingReminders = termine.filter(t => {
     if (!t.erinnerung) return false;
@@ -190,11 +264,24 @@ export default function App() {
     return diff >= 0 && diff <= 3;
   });
 
-  if (!loggedIn) return <LoginScreen users={users} onLogin={(u) => { setUser(u); setLoggedIn(true); }} />;
+  // ── Loading Screen ──────────────────────────────────────────────
+  if (loading) return (
+    <div style={{ minHeight: "100vh", background: "linear-gradient(135deg,#0f2647,#1a4480)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 20 }}>
+      <div style={{ width: 52, height: 52, background: "linear-gradient(135deg,#1a80d9,#0d9e80)", borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26 }}>🗂</div>
+      <div style={{ width: 40, height: 40, border: "4px solid rgba(255,255,255,.2)", borderTopColor: "#fff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+      <p style={{ color: "rgba(255,255,255,.7)", fontFamily: "'DM Sans',sans-serif", fontSize: 14 }}>SozialDoku wird geladen…</p>
+    </div>
+  );
+
+  if (!session) return <LoginScreen onLogin={async (email, pass) => {
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    if (error) return "Ungültige Zugangsdaten.";
+    return null;
+  }} />;
 
   const filteredClients = clients.filter(c =>
     c.name.toLowerCase().includes(search.toLowerCase()) ||
-    c.aktenzeichen.includes(search) ||
+    (c.aktenzeichen || "").includes(search) ||
     c.einrichtung.toLowerCase().includes(search.toLowerCase())
   );
 
@@ -209,7 +296,7 @@ export default function App() {
 
       <div className="app-layout">
         {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
-        <Sidebar view={view} setView={(v) => { setView(v); setSidebarOpen(false); }} user={user} onLogout={() => setLoggedIn(false)} isOpen={sidebarOpen} notifications={upcomingReminders.length} isAdmin={isAdmin} />
+        <Sidebar view={view} setView={(v) => { setView(v); setSidebarOpen(false); }} user={user} onLogout={async () => { await supabase.auth.signOut(); }} isOpen={sidebarOpen} notifications={upcomingReminders.length} isAdmin={isAdmin} />
 
         <div className="main-wrapper">
           <div className="mobile-header">
@@ -221,14 +308,28 @@ export default function App() {
           <main className="main-content">
             {view === "dashboard" && <Dashboard clients={clients} eintraege={eintraege} termine={termine} setView={setView} setSelectedClient={setSelectedClient} user={user} />}
             {view === "clients" && <ClientsView clients={filteredClients} search={search} setSearch={setSearch} onSelect={(c) => { setSelectedClient(c); setView("detail"); }} onNew={canEdit ? () => setShowNewClient(true) : null} />}
-            {view === "detail" && selectedClient && <DetailView client={selectedClient} eintraege={eintraege[selectedClient.id] || []} onBack={() => setView("clients")} canEdit={canEdit} onNewEintrag={canEdit ? () => setNewEintrag({ typ: "Fallverlauf", titel: "", text: "", datum: ds(new Date()), fachkraft: user.name, stunden: "" }) : null} onExport={() => exportPDF(selectedClient, eintraege[selectedClient.id] || [])} onKiBericht={() => setView("kibericht")} notizen={notizen} setNotizen={setNotizen} user={user} users={users} showToast={showToast} fallakten={fallakten} setFallakten={setFallakten} />}
-            {view === "kalender" && <KalenderView termine={termine} setTermine={setTermine} clients={clients} user={user} showToast={showToast} />}
+            {view === "detail" && selectedClient && (
+              <DetailView
+                client={selectedClient}
+                eintraege={eintraege[selectedClient.id] || []}
+                onBack={() => setView("clients")}
+                canEdit={canEdit}
+                onNewEintrag={canEdit ? () => setNewEintrag({ typ: "Fallverlauf", titel: "", text: "", datum: ds(new Date()), fachkraft: user?.name || "", stunden: "" }) : null}
+                onExport={() => exportPDF(selectedClient, eintraege[selectedClient.id] || [])}
+                onKiBericht={() => setView("kibericht")}
+                notizen={notizen}
+                setNotizen={async (notiz) => { await addNotiz({ ...notiz, klientId: selectedClient.id }); }}
+                deleteNotiz={deleteNotiz}
+                user={user}
+                showToast={showToast}
+              />
+            )}
+            {view === "kalender" && <KalenderView termine={termine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} clients={clients} user={user} showToast={showToast} />}
             {view === "benachrichtigungen" && <BenachrichtigungenView termine={termine} clients={clients} setView={setView} setSelectedClient={setSelectedClient} />}
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
             {view === "stunden" && <StundenView clients={clients} eintraege={eintraege} />}
             {view === "kibericht" && <KIBerichtView clients={clients} eintraege={eintraege} user={user} kiSettings={kiSettings} />}
-            {view === "notizen" && <NotizenView notizen={notizen} setNotizen={setNotizen} user={user} clients={clients} showToast={showToast} />}
-            {view === "nutzer" && isAdmin && <NutzerView users={users} setUsers={setUsers} einrichtungen={EINRICHTUNGEN} showToast={showToast} />}
+            {view === "nutzer" && isAdmin && <NutzerView users={users} onToggle={toggleNutzer} showToast={showToast} />}
             {view === "einstellungen" && isAdmin && <KIEinstellungenView kiSettings={kiSettings} setKiSettings={setKiSettings} showToast={showToast} />}
             {view === "dsgvo" && <DsgvoView />}
           </main>
@@ -244,23 +345,18 @@ export default function App() {
           </div>
           <div style={{ padding: "14px 16px", maxHeight: 320, overflowY: "auto" }}>
             {notizen.slice(0, 4).map(n => (
-              <div key={n.id} style={{ padding: "10px 12px", borderRadius: 10, marginBottom: 8, background: { gelb: "#fef9c3", rot: "#fee2e2", gruen: "#dcfce7", blau: "#dbeafe", lila: "#ede9fe" }[n.farbe] || "#f8fafc", borderLeft: `3px solid ${{ gelb: "#f59e0b", rot: "#ef4444", gruen: "#22c55e", blau: "#3b82f6", lila: "#8b5cf6" }[n.farbe] || "#94a3b8"}` }}>
+              <div key={n.id} style={{ padding: "10px 12px", borderRadius: 10, marginBottom: 8, background: (NOTIZ_FARBEN[n.farbe] || NOTIZ_FARBEN.gelb).bg, borderLeft: `3px solid ${(NOTIZ_FARBEN[n.farbe] || NOTIZ_FARBEN.gelb).border}` }}>
                 <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#1e293b" }}>{n.titel}</p>
-                <p style={{ margin: "3px 0 0", fontSize: 12, color: "#475569", lineHeight: 1.5 }}>{n.text.length > 80 ? n.text.slice(0, 80) + "…" : n.text}</p>
-                <p style={{ margin: "4px 0 0", fontSize: 11, color: "#94a3b8" }}>{n.typ === "team" ? "👥 Team" : "👤 Persönlich"} · {n.autor}</p>
+                <p style={{ margin: "3px 0 0", fontSize: 12, color: "#475569", lineHeight: 1.5 }}>{(n.text || "").length > 80 ? n.text.slice(0, 80) + "…" : n.text}</p>
               </div>
             ))}
             <button onClick={() => { setView("notizen"); setNotizPanel(false); setSidebarOpen(false); }} style={{ ...btnSecondary, width: "100%", justifyContent: "center", fontSize: 13, marginTop: 4 }}>Alle Notizen öffnen →</button>
           </div>
         </div>
       )}
+      <button onClick={() => setNotizPanel(p => !p)} style={{ position: "fixed", bottom: 24, right: 24, width: 52, height: 52, borderRadius: "50%", background: "linear-gradient(135deg,#f59e0b,#d97706)", border: "none", cursor: "pointer", fontSize: 22, boxShadow: "0 4px 20px rgba(245,158,11,.5)", zIndex: 499, display: "flex", alignItems: "center", justifyContent: "center" }}>📝</button>
 
-      {/* Floating Notiz Button */}
-      <button onClick={() => setNotizPanel(p => !p)} style={{ position: "fixed", bottom: 24, right: 24, width: 52, height: 52, borderRadius: "50%", background: "linear-gradient(135deg,#f59e0b,#d97706)", border: "none", cursor: "pointer", fontSize: 22, boxShadow: "0 4px 20px rgba(245,158,11,.5)", zIndex: 499, display: "flex", alignItems: "center", justifyContent: "center", transition: "transform .2s" }}
-        title="Notizen">
-        📝
-      </button>
-
+      {/* Neuer Eintrag Modal */}
       {newEintrag && selectedClient && (
         <Modal onClose={() => setNewEintrag(null)}>
           <h2 style={{ fontFamily: "'DM Serif Display',serif", fontSize: 22, marginBottom: 4 }}>Neuer Eintrag</h2>
@@ -283,30 +379,37 @@ export default function App() {
           <FormField label="Beschreibung"><textarea rows={4} value={newEintrag.text} onChange={e => setNewEintrag({ ...newEintrag, text: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} placeholder="Details…" /></FormField>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
             <button onClick={() => setNewEintrag(null)} style={btnSecondary}>Abbrechen</button>
-            <button onClick={() => {
+            <button onClick={async () => {
               if (!newEintrag.titel || !newEintrag.text) return showToast("Bitte Titel und Beschreibung ausfüllen.", "#c0392b");
-              setEintraege(prev => ({ ...prev, [selectedClient.id]: [{ ...newEintrag, id: Date.now(), stunden: parseFloat(newEintrag.stunden) || undefined }, ...(prev[selectedClient.id] || [])] }));
-              setNewEintrag(null); showToast("Eintrag gespeichert ✓");
+              await addEintrag(newEintrag, selectedClient.id);
+              setNewEintrag(null);
             }} style={btnPrimary}>Speichern</button>
           </div>
         </Modal>
       )}
 
       {showNewClient && (
-        <NewClientModal einrichtungen={EINRICHTUNGEN} onClose={() => setShowNewClient(false)} onSave={(c) => {
-          const id = Date.now();
-          setClients(prev => [...prev, { ...c, id, status: "aktiv" }]);
-          setEintraege(prev => ({ ...prev, [id]: [] }));
-          setShowNewClient(false); showToast("Klient angelegt ✓");
-        }} />
+        <NewClientModal einrichtungen={EINRICHTUNGEN} onClose={() => setShowNewClient(false)} onSave={async (c) => { await addClient(c); setShowNewClient(false); }} />
       )}
     </>
   );
 }
 
-function LoginScreen({ users, onLogin }) {
-  const [email, setEmail] = useState(""); const [pass, setPass] = useState(""); const [err, setErr] = useState("");
-  const handle = () => { const found = users.find(u => u.email === email && u.password === pass && u.aktiv); if (found) onLogin(found); else setErr("Ungültige Zugangsdaten oder Konto deaktiviert."); };
+// ── Login Screen (Supabase Auth) ───────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handle = async () => {
+    setLoading(true);
+    setErr("");
+    const error = await onLogin(email, pass);
+    if (error) setErr(error);
+    setLoading(false);
+  };
+
   return (
     <><FontLoader /><style>{globalStyles}</style>
       <div style={{ minHeight: "100vh", background: "linear-gradient(135deg,#0f2647 0%,#1a4480 50%,#0d6b5e 100%)", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans',sans-serif", padding: 20 }}>
@@ -316,19 +419,17 @@ function LoginScreen({ users, onLogin }) {
             <h1 style={{ fontFamily: "'DM Serif Display',serif", fontSize: 30, color: "#0f2647", margin: 0 }}>SozialDoku</h1>
             <p style={{ color: "#64748b", fontSize: 14, marginTop: 6 }}>Dokumentationssoftware für soziale Einrichtungen</p>
           </div>
-          <FormField label="E-Mail"><input value={email} onChange={e => setEmail(e.target.value)} style={inputStyle} placeholder="demo@sozialdoku.de" type="email" /></FormField>
+          <FormField label="E-Mail"><input value={email} onChange={e => setEmail(e.target.value)} style={inputStyle} placeholder="name@einrichtung.de" type="email" /></FormField>
           <FormField label="Passwort"><input value={pass} onChange={e => setPass(e.target.value)} onKeyDown={e => e.key === "Enter" && handle()} style={inputStyle} placeholder="••••••••" type="password" /></FormField>
           {err && <p style={{ color: "#c0392b", fontSize: 13, marginBottom: 12 }}>{err}</p>}
-          <button onClick={handle} style={{ ...btnPrimary, width: "100%", justifyContent: "center", fontSize: 16, padding: "13px 0" }}>Anmelden</button>
-          <div style={{ marginTop: 16, background: "#f8fafc", borderRadius: 10, padding: "12px 16px" }}>
-            <p style={{ fontSize: 12, color: "#64748b", margin: "0 0 6px", fontWeight: 600 }}>Demo-Zugänge (Passwort: demo123):</p>
-            {[["Admin", "demo@sozialdoku.de"], ["Leitung", "c.weber@sozialdoku.de"], ["Fachkraft", "b.koch@sozialdoku.de"]].map(([r, e]) => (
-              <p key={r} style={{ margin: "4px 0", fontSize: 12, color: "#475569", cursor: "pointer" }} onClick={() => { setEmail(e); setPass("demo123"); }}>
-                <span style={{ ...rolleStyle(r), padding: "1px 8px", borderRadius: 4, fontWeight: 700, fontSize: 11 }}>{r}</span> {e}
-              </p>
-            ))}
+          <button onClick={handle} disabled={loading} style={{ ...btnPrimary, width: "100%", justifyContent: "center", fontSize: 16, padding: "13px 0", opacity: loading ? .7 : 1 }}>
+            {loading ? "⏳ Anmelden…" : "Anmelden"}
+          </button>
+          <div style={{ marginTop: 16, background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10, padding: "12px 16px", fontSize: 13, color: "#0369a1" }}>
+            <p style={{ margin: 0, fontWeight: 700, marginBottom: 4 }}>ℹ️ Erster Start?</p>
+            <p style={{ margin: 0, fontSize: 12 }}>Lege zunächst einen Nutzer in Supabase unter Authentication → Users an. Danach kannst du dich hier einloggen.</p>
           </div>
-          <p style={{ fontSize: 11, color: "#94a3b8", textAlign: "center", marginTop: 16 }}>🔒 DSGVO-konform · TLS-verschlüsselt</p>
+          <p style={{ fontSize: 11, color: "#94a3b8", textAlign: "center", marginTop: 16 }}>🔒 DSGVO-konform · Serverstandort Frankfurt</p>
         </div>
       </div>
     </>
@@ -705,7 +806,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   );
 }
 
-function KalenderView({ termine, setTermine, clients, user, showToast }) {
+function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, showToast }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ titel: "", datum: ds(new Date()), uhrzeit: "09:00", klientId: "", fachkraft: user?.name || "", ort: "", notiz: "", erinnerung: false });
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -890,7 +991,7 @@ function VorlagenView({ vorlagen }) {
   );
 }
 
-function NutzerView({ users, setUsers, einrichtungen, showToast }) {
+function NutzerView({ users, onToggle, showToast }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "demo123", rolle: "Fachkraft", einrichtung: einrichtungen[0], aktiv: true });
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -1184,7 +1285,7 @@ const NOTIZ_FARBEN = {
   lila:  { bg: "#ede9fe", border: "#8b5cf6", label: "Lila" },
 };
 
-function NotizenView({ notizen, setNotizen, user, clients, showToast }) {
+function NotizenView({ notizen, onAdd, onUpdate, onDelete, user, clients, showToast }) {
   const [filterTyp, setFilterTyp] = useState("alle");
   const [filterTag, setFilterTag] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
