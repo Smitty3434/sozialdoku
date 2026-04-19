@@ -475,6 +475,26 @@ function ClientsView({ clients, search, setSearch, onSelect, onNew }) {
   );
 }
 
+
+function HeaderButton({ children, onClick, primary = false }) {
+  return <button onClick={onClick} style={primary ? { ...btnPrimary, fontSize: 12 } : { ...btnSecondary, fontSize: 12 }}>{children}</button>;
+}
+
+function AkteSection({ sectionKey, title, color = "#0f2647", children, rightContent = null, open, onToggle }) {
+  return (
+    <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 2px 10px rgba(15,38,71,.06)", overflow: "hidden", border: "1px solid #e2e8f0" }}>
+      <button onClick={() => onToggle(sectionKey)} style={{ width: "100%", background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px", textAlign: "left" }}>
+        <span style={{ fontSize: 15, fontWeight: 700, color, fontFamily: "'DM Sans',sans-serif" }}>{title}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {rightContent}
+          <span style={{ color: "#94a3b8", fontSize: 14 }}>{open ? "▾" : "▸"}</span>
+        </span>
+      </button>
+      {open && <div style={{ padding: "0 18px 18px" }}>{children}</div>}
+    </div>
+  );
+}
+
 function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBericht, canEdit, notizen, setNotizen, user, users, showToast, fallakten, setFallakten }) {
   const [openMap, setOpenMap] = useState({ klient: true, aufgaben: true, intern: false, extern: false, ziele: true, dateien: false, soziales: true, gesundheit: false, bildungBeruf: false, finanzen: false, behoerden: false, freizeit: false, dokumentation: true, notizen: false });
   const [newDocs, setNewDocs] = useState({ soziales: { titel: "", text: "", datum: ds(new Date()) }, gesundheit: { titel: "", text: "", datum: ds(new Date()) }, bildungBeruf: { titel: "", text: "", datum: ds(new Date()) }, finanzen: { titel: "", text: "", datum: ds(new Date()) }, behoerden: { titel: "", text: "", datum: ds(new Date()) }, freizeit: { titel: "", text: "", datum: ds(new Date()) } });
@@ -558,20 +578,6 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
     ...eintraege.map(e => ({ id: `eintrag-${e.id}`, datum: e.datum, titel: e.titel, text: e.text, autor: e.fachkraft, quelle: e.typ, farbe: typeColor(e.typ) })),
   ].sort((a, b) => new Date(b.datum) - new Date(a.datum));
 
-  const HeaderButton = ({ children, onClick, primary=false }) => <button onClick={onClick} style={primary ? { ...btnPrimary, fontSize: 12 } : { ...btnSecondary, fontSize: 12 }}>{children}</button>;
-  const AkteSection = ({ sectionKey, title, color="#0f2647", children, rightContent=null }) => (
-    <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 2px 10px rgba(15,38,71,.06)", overflow: "hidden", border: "1px solid #e2e8f0" }}>
-      <button onClick={() => toggleSection(sectionKey)} style={{ width: "100%", background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px", textAlign: "left" }}>
-        <span style={{ fontSize: 15, fontWeight: 700, color, fontFamily: "'DM Sans',sans-serif" }}>{title}</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          {rightContent}
-          <span style={{ color: "#94a3b8", fontSize: 14 }}>{openMap[sectionKey] ? "▾" : "▸"}</span>
-        </span>
-      </button>
-      {openMap[sectionKey] && <div style={{ padding: "0 18px 18px" }}>{children}</div>}
-    </div>
-  );
-
   return (
     <div>
       <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 14, fontFamily: "'DM Sans',sans-serif", marginBottom: 16, padding: 0 }}>← Zurück</button>
@@ -591,7 +597,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
       </div>
 
       <div className="akte-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 14 }}>
-        <AkteSection sectionKey="klient" title="Klient">
+        <AkteSection sectionKey="klient" title="Klient" open={openMap["klient"]} onToggle={toggleSection}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 }}>
             <FormField label="Geburtsdatum"><input value={formatDate(client.dob)} disabled style={{ ...inputStyle, background: "#f8fafc" }} /></FormField>
             <FormField label="Telefon"><input value={akte.klient.telefon} onChange={e => updateKlient("telefon", e.target.value)} style={inputStyle} placeholder="Telefonnummer" /></FormField>
@@ -604,7 +610,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
           </div>
         </AkteSection>
 
-        <AkteSection sectionKey="aufgaben" title="Aufgaben" rightContent={<span style={{ fontSize: 12, color: "#64748b" }}>{akte.aufgaben?.length || 0}</span>}>
+        <AkteSection sectionKey="aufgaben" title="Aufgaben" rightContent={<span style={{ fontSize: 12, color: "#64748b" }}>{akte.aufgaben?.length || 0}</span>} open={openMap["aufgaben"]} onToggle={toggleSection}>
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 8, marginBottom: 10 }}>
             <input value={quickFields.aufgabe} onChange={e => setQuickFields(p => ({ ...p, aufgabe: e.target.value }))} style={inputStyle} placeholder="Neue Aufgabe / Notiz" />
             <input type="date" value={quickFields.aufgabeDatum} onChange={e => setQuickFields(p => ({ ...p, aufgabeDatum: e.target.value }))} style={inputStyle} />
@@ -614,7 +620,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
           {(akte.aufgaben || []).map(item => <div key={item.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, borderTop: "1px solid #f1f5f9", padding: "10px 0" }}><div><p style={{ margin: 0, fontWeight: 700, fontSize: 13 }}>{item.titel}</p><p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{item.status}{item.datum ? ` · ${formatDate(item.datum)}` : ""}{item.notiz ? ` · ${item.notiz}` : ""}</p></div><button onClick={() => removeItem("aufgaben", item.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>🗑</button></div>)}
         </AkteSection>
 
-        <AkteSection sectionKey="extern" title="Zuständigkeit extern">
+        <AkteSection sectionKey="extern" title="Zuständigkeit extern" open={openMap["extern"]} onToggle={toggleSection}>
           <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 8, marginBottom: 8 }}>
             <input value={quickFields.externName} onChange={e => setQuickFields(p => ({ ...p, externName: e.target.value }))} style={inputStyle} placeholder="Name, z. B. Frau V." />
             <input value={quickFields.externStelle} onChange={e => setQuickFields(p => ({ ...p, externStelle: e.target.value }))} style={inputStyle} placeholder="Institution / Stelle" />
@@ -628,7 +634,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
           {(akte.extern || []).length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Keine externen Zuständigkeiten hinterlegt.</p>}
         </AkteSection>
 
-        <AkteSection sectionKey="intern" title="Zuständigkeit intern">
+        <AkteSection sectionKey="intern" title="Zuständigkeit intern" open={openMap["intern"]} onToggle={toggleSection}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginBottom: 10 }}>
             <select value={selectedInternUserId} onChange={e => setSelectedInternUserId(e.target.value)} style={inputStyle}>
               <option value="">Fachkraft auswählen …</option>
@@ -640,7 +646,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
           {(akte.intern || []).length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Keine internen Zuständigkeiten hinterlegt.</p>}
         </AkteSection>
 
-        <AkteSection sectionKey="ziele" title="Ziele">
+        <AkteSection sectionKey="ziele" title="Ziele" open={openMap["ziele"]} onToggle={toggleSection}>
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 8, marginBottom: 10 }}>
             <input value={quickFields.ziel} onChange={e => setQuickFields(p => ({ ...p, ziel: e.target.value }))} style={inputStyle} placeholder="Neues Ziel" />
             <input type="date" value={quickFields.zielDatum} onChange={e => setQuickFields(p => ({ ...p, zielDatum: e.target.value }))} style={inputStyle} />
@@ -650,7 +656,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
           {(akte.ziele || []).length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Noch keine Ziele erfasst.</p>}
         </AkteSection>
 
-        <AkteSection sectionKey="dateien" title="Dateien">
+        <AkteSection sectionKey="dateien" title="Dateien" open={openMap["dateien"]} onToggle={toggleSection}>
           <input ref={fileInputRef} type="file" onChange={handleDateiUpload} style={{ display: "none" }} />
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, marginBottom: 10 }}>
             <select value={quickFields.dateiKategorie} onChange={e => setQuickFields(p => ({ ...p, dateiKategorie: e.target.value }))} style={inputStyle}>
@@ -664,7 +670,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
         </AkteSection>
 
         {Object.entries(FACHBEREICH_LABELS).map(([key, label]) => (
-          <AkteSection key={key} sectionKey={key} title={label} color={FACHBEREICH_FARBEN[key]} rightContent={<span style={{ fontSize: 12, color: FACHBEREICH_FARBEN[key] }}>{(akte.fachbereiche?.[key] || []).length}</span>}>
+          <AkteSection key={key} sectionKey={key} title={label} color={FACHBEREICH_FARBEN[key]} rightContent={<span style={{ fontSize: 12, color: FACHBEREICH_FARBEN[key] }}>{(akte.fachbereiche?.[key] || []).length}</span>} open={openMap[key]} onToggle={toggleSection}>
             <div style={{ background: "#f8fafc", borderRadius: 10, padding: 12, marginBottom: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
                 <input value={newDocs[key].titel} onChange={e => setNewDocs(prev => ({ ...prev, [key]: { ...prev[key], titel: e.target.value } }))} style={inputStyle} placeholder={`Titel für ${label}`} />
@@ -681,7 +687,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
         ))}
 
         <div style={{ gridColumn: "1 / -1" }}>
-          <AkteSection sectionKey="dokumentation" title="Dokumentation" rightContent={<span style={{ fontSize: 12, color: "#64748b" }}>{chronoDokumentation.length}</span>}>
+          <AkteSection sectionKey="dokumentation" title="Dokumentation" rightContent={<span style={{ fontSize: 12, color: "#64748b" }}>{chronoDokumentation.length}</span>} open={openMap["dokumentation"]} onToggle={toggleSection}>
             {chronoDokumentation.length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Noch keine Dokumentation vorhanden.</p>}
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {chronoDokumentation.map(item => <div key={item.id} style={{ borderLeft: `4px solid ${item.farbe}`, background: "#f8fafc", borderRadius: 12, padding: "12px 14px" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}><div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><span style={{ background: item.farbe + '22', color: item.farbe, padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700 }}>{item.quelle}</span><strong style={{ fontSize: 13, color: "#0f172a" }}>{item.titel}</strong></div><span style={{ fontSize: 11, color: "#94a3b8" }}>{formatDate(item.datum)} · {item.autor}</span></div><p style={{ margin: "6px 0 0", fontSize: 13, color: "#475569", lineHeight: 1.6 }}>{item.text}</p></div>)}
@@ -690,7 +696,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
         </div>
 
         <div style={{ gridColumn: "1 / -1" }}>
-          <AkteSection sectionKey="notizen" title="Notizen zum Klienten" rightContent={<span style={{ fontSize: 12, color: "#64748b" }}>{clientNotizen.length}</span>}>
+          <AkteSection sectionKey="notizen" title="Notizen zum Klienten" rightContent={<span style={{ fontSize: 12, color: "#64748b" }}>{clientNotizen.length}</span>} open={openMap["notizen"]} onToggle={toggleSection}>
             {clientNotizen.length === 0 ? <p style={{ color: "#94a3b8", fontSize: 13 }}>Keine verknüpften Notizen vorhanden.</p> : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{clientNotizen.map(n => { const fc = NOTIZ_FARBEN[n.farbe] || NOTIZ_FARBEN.gelb; return <div key={n.id} style={{ background: fc.bg, borderRadius: 10, padding: "12px 14px", borderLeft: `4px solid ${fc.border}` }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}><strong style={{ fontSize: 13 }}>{n.titel}</strong><span style={{ fontSize: 11, color: "#64748b" }}>{n.autor} · {formatDate(n.datum)}</span></div>{n.text && <p style={{ margin: "6px 0 0", fontSize: 12, color: "#475569", lineHeight: 1.5 }}>{n.text}</p>}</div>; })}</div>}
           </AkteSection>
         </div>
