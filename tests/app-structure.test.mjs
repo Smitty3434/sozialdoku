@@ -30,3 +30,10 @@ assert.deepEqual(newDocKeys.sort(), labelKeys.sort(), "Every rendered Fachbereic
 assert.deepEqual(emptyFallakteKeys.sort(), labelKeys.sort(), "Every rendered Fachbereich needs matching fallakte state");
 
 assert.match(source, /@media \(max-width: 920px\) \{[\s\S]*\.sidebar \{[\s\S]*\.main-content \{[\s\S]*\}/, "Mobile sidebar/layout styles must live inside the mobile media query");
+
+assert.match(source, /const \[pdfPreview,\s*setPdfPreview\]\s*=\s*useState\(null\)/, "DetailView must keep PDF preview state");
+assert.match(source, /function PdfPreviewModal/, "A PDF preview modal component must exist");
+assert.match(source, /<iframe[\s\S]*src=\{file\.url\}/, "PDF preview must embed the signed URL in an iframe");
+assert.match(source, />Herunterladen</, "PDF preview must provide a download action");
+assert.match(source, />Drucken</, "PDF preview must provide a print action");
+assert.match(source, />Schließen</, "PDF preview must provide a close action");

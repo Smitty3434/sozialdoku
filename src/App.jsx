@@ -20,7 +20,7 @@ const FontLoader = () => {
 // ── Constants ─────────────────────────────────────────────────────
 const EINRICHTUNGEN = ["AWO Zentrum Nord", "Caritas Süd", "DRK Mitte", "Diakonie West"];
 const ROLLEN = ["Admin", "Leitung", "Fachkraft"];
-const ROLLEN_FARBEN = { Admin: { bg: "#fce7f3", color: "#9d174d" }, Leitung: { bg: "#e0e7ff", color: "#3730a3" }, Fachkraft: { bg: "#dcfce7", color: "#166534" } };
+const ROLLEN_FARBEN = { Admin: { bg: "#f1f5f9", color: "#334155" }, Leitung: { bg: "#e0f2fe", color: "#075985" }, Fachkraft: { bg: "#ecfdf5", color: "#047857" } };
 const VORLAGEN = [
   { id: 1, typ: "Fallverlauf", titel: "Erstgespräch", text: "Erstkontakt mit Klient/in hergestellt. Aktuelle Lebenssituation besprochen. Unterstützungsbedarf ermittelt. Nächste Schritte vereinbart." },
   { id: 2, typ: "Fallverlauf", titel: "Verlaufsgespräch", text: "Regelmäßiges Verlaufsgespräch durchgeführt. Aktuelle Situation besprochen. Fortschritte dokumentiert. Hilfeplan überprüft und ggf. angepasst." },
@@ -30,11 +30,11 @@ const VORLAGEN = [
   { id: 6, typ: "Stunden", titel: "Hausbesuch", text: "Hausbesuch durchgeführt. Wohnsituation begutachtet. Unterstützungsbedarf im Haushalt besprochen. Vereinbarungen für weitere Maßnahmen getroffen." },
 ];
 const NOTIZ_FARBEN = {
-  gelb:  { bg: "#fef9c3", border: "#f59e0b", label: "Gelb" },
-  rot:   { bg: "#fee2e2", border: "#ef4444", label: "Rot" },
-  gruen: { bg: "#dcfce7", border: "#22c55e", label: "Grün" },
-  blau:  { bg: "#dbeafe", border: "#3b82f6", label: "Blau" },
-  lila:  { bg: "#ede9fe", border: "#8b5cf6", label: "Lila" },
+  gelb:  { bg: "#fefce8", border: "#ca8a04", label: "Gelb" },
+  rot:   { bg: "#fff1f2", border: "#be123c", label: "Rot" },
+  gruen: { bg: "#f0fdf4", border: "#15803d", label: "Grün" },
+  blau:  { bg: "#eff6ff", border: "#1d4ed8", label: "Blau" },
+  lila:  { bg: "#f5f3ff", border: "#6d28d9", label: "Lila" },
 };
 
 const FACHBEREICH_LABELS = {
@@ -47,11 +47,11 @@ const FACHBEREICH_LABELS = {
 };
 const FACHBEREICH_FARBEN = {
   soziales: "#0f766e",
-  gesundheit: "#dc2626",
-  bildungBeruf: "#2563eb",
-  finanzen: "#7c3aed",
+  gesundheit: "#64748b",
+  bildungBeruf: "#334155",
+  finanzen: "#475569",
   behoerden: "#475569",
-  freizeit: "#ea580c",
+  freizeit: "#64748b",
 };
 const normalizeBereichKey = (key) => key === "bildungBeruf" ? "bildung_beruf" : key;
 const denormalizeBereichKey = (key) => key === "bildung_beruf" ? "bildungBeruf" : key;
@@ -85,8 +85,8 @@ const createEmptyFallakte = (client = {}) => ({
 // ── Helpers ───────────────────────────────────────────────────────
 const ds = (d) => d.toISOString().split("T")[0];
 const formatDate = (d) => d ? new Date(d).toLocaleDateString("de-DE") : "–";
-const typeColor = (t) => ({ Fallverlauf: "#2563a8", "Maßnahme": "#16825a", Massnahme: "#16825a", Stunden: "#b45309" }[t] || "#555");
-const typBg = (t) => ({ Fallverlauf: "#e8f0fb", "Maßnahme": "#e6f7f0", Massnahme: "#e6f7f0", Stunden: "#fef3c7" }[t] || "#f3f4f6");
+const typeColor = (t) => ({ Fallverlauf: "#1e3a8a", "Maßnahme": "#0f766e", Massnahme: "#0f766e", Stunden: "#854d0e" }[t] || "#475569");
+const typBg = (t) => ({ Fallverlauf: "#eff6ff", "Maßnahme": "#f0fdfa", Massnahme: "#f0fdfa", Stunden: "#fefce8" }[t] || "#f8fafc");
 const rolleStyle = (r) => ROLLEN_FARBEN[r] || { bg: "#f1f5f9", color: "#475569" };
 
 // ── PDF Export ─────────────────────────────────────────────────────
@@ -743,15 +743,15 @@ function HeaderButton({ children, onClick, primary = false }) {
 
 function AkteSection({ sectionKey, title, color = "#0f2647", children, rightContent = null, open, onToggle }) {
   return (
-    <div style={{ background: "#fff", borderRadius: 14, boxShadow: "0 2px 10px rgba(15,38,71,.06)", overflow: "hidden", border: "1px solid #e2e8f0" }}>
-      <button onClick={() => onToggle(sectionKey)} style={{ width: "100%", background: "#fff", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px", textAlign: "left" }}>
-        <span style={{ fontSize: 15, fontWeight: 700, color, fontFamily: "'DM Sans',sans-serif" }}>{title}</span>
+    <div style={{ background: open ? "#ffffff" : "#f8fafc", borderRadius: 10, boxShadow: open ? "0 1px 4px rgba(15,23,42,.05)" : "none", overflow: "hidden", border: open ? "1px solid #94a3b8" : "1px solid #e2e8f0" }}>
+      <button onClick={() => onToggle(sectionKey)} style={{ width: "100%", background: open ? "#f8fafc" : "#fff", border: "none", borderLeft: open ? `3px solid ${color}` : "3px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", textAlign: "left" }}>
+        <span style={{ fontSize: 14, fontWeight: 700, color: "#1f2937", fontFamily: "'DM Sans',sans-serif" }}>{title}</span>
         <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {rightContent}
-          <span style={{ color: "#94a3b8", fontSize: 14 }}>{open ? "▾" : "▸"}</span>
+          <span style={{ color: "#64748b", fontSize: 13 }}>{open ? "Weniger" : "Mehr"}</span>
         </span>
       </button>
-      {open && <div style={{ padding: "0 18px 18px" }}>{children}</div>}
+      {open && <div style={{ padding: "16px" }}>{children}</div>}
     </div>
   );
 }
@@ -761,6 +761,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   const [newDocs, setNewDocs] = useState({ soziales: { titel: "", text: "", datum: ds(new Date()) }, gesundheit: { titel: "", text: "", datum: ds(new Date()) }, bildungBeruf: { titel: "", text: "", datum: ds(new Date()) }, finanzen: { titel: "", text: "", datum: ds(new Date()) }, behoerden: { titel: "", text: "", datum: ds(new Date()) }, freizeit: { titel: "", text: "", datum: ds(new Date()) } });
   const [quickFields, setQuickFields] = useState({ aufgabe: "", aufgabeDatum: ds(new Date()), externName: "", externStelle: "", externTelefon: "", externEmail: "", ziel: "", zielDatum: ds(new Date()), dateiKategorie: "Dokument", dateiDatum: ds(new Date()) });
   const [selectedInternUserId, setSelectedInternUserId] = useState("");
+  const [pdfPreview, setPdfPreview] = useState(null);
   const fileInputRef = useRef(null);
   const akte = fallakten?.[client.id] || createEmptyFallakte(client);
   const clientNotizen = (notizen || []).filter(n => n.klientId == client.id);
@@ -919,11 +920,28 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
     showToast("Datei hinzugefügt ✓");
   };
 
-  const downloadStoredFile = async (item) => {
+  const isPdfFile = (item) => item?.mimeType === "application/pdf" || /\.pdf$/i.test(item?.name || "");
+
+  const getSignedFileUrl = async (item) => {
     if (!item?.path) return showToast("Für diese Datei liegt kein Speicherpfad vor.", "#c0392b");
     const { data, error } = await supabase.storage.from(item.bucket || "client-files").createSignedUrl(item.path, 60);
     if (error || !data?.signedUrl) return showToast("Download konnte nicht erstellt werden.", "#c0392b");
-    window.open(data.signedUrl, "_blank");
+    return data.signedUrl;
+  };
+
+  const downloadStoredFile = async (item) => {
+    const signedUrl = await getSignedFileUrl(item);
+    if (signedUrl) window.open(signedUrl, "_blank");
+  };
+
+  const openStoredFile = async (item) => {
+    const signedUrl = await getSignedFileUrl(item);
+    if (!signedUrl) return;
+    if (!isPdfFile(item)) {
+      window.open(signedUrl, "_blank");
+      return;
+    }
+    setPdfPreview({ ...item, url: signedUrl });
   };
 
   const removeItem = async (section, id) => {
@@ -963,7 +981,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   return (
     <div>
       <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", color: "#64748b", fontSize: 14, fontFamily: "'DM Sans',sans-serif", marginBottom: 16, padding: 0 }}>← Zurück</button>
-      <div style={{ background: "linear-gradient(135deg,#eef2ff,#e2e8f0)", borderRadius: 18, padding: "24px 26px", marginBottom: 20, border: "1px solid #dbe3f1" }}>
+      <div style={{ background: "#fff", borderRadius: 12, padding: "24px 26px", marginBottom: 20, border: "1px solid #dbe3f1", boxShadow: "0 1px 6px rgba(15,23,42,.05)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
           <div>
             <h1 style={{ fontFamily: "'DM Serif Display',serif", fontSize: 34, margin: 0, color: "#0f172a" }}>Fallakte {client.name}</h1>
@@ -1047,7 +1065,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
             <input type="date" value={quickFields.dateiDatum} onChange={e => setQuickFields(p => ({ ...p, dateiDatum: e.target.value }))} style={inputStyle} />
             <button onClick={() => fileInputRef.current?.click()} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Datei hochladen</button>
           </div>
-          {(akte.dateien || []).map(item => <div key={item.id} style={{ borderTop: "1px solid #f1f5f9", padding: "10px 0", display: "flex", justifyContent: "space-between", gap: 10 }}><div><p style={{ margin: 0, fontWeight: 700, fontSize: 13 }}>{item.name}</p><p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{item.kategorie || "Dokument"} · {formatDate(item.datum)}{item.size ? ` · ${(item.size/1024).toFixed(1)} KB` : ""}</p></div><div style={{ display: "flex", gap: 8 }}><button onClick={() => downloadStoredFile(item)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>⬇ Herunterladen</button><button onClick={() => removeItem("dateien", item.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>🗑</button></div></div>)}
+          {(akte.dateien || []).map(item => <div key={item.id} style={{ borderTop: "1px solid #f1f5f9", padding: "10px 0", display: "flex", justifyContent: "space-between", gap: 10 }}><div><button onClick={() => openStoredFile(item)} style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#0f172a", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", textAlign: "left" }}>{item.name}</button><p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{item.kategorie || "Dokument"} · {formatDate(item.datum)}{item.size ? ` · ${(item.size/1024).toFixed(1)} KB` : ""}</p></div><div style={{ display: "flex", gap: 8 }}><button onClick={() => openStoredFile(item)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>{isPdfFile(item) ? "Ansehen" : "Öffnen"}</button><button onClick={() => downloadStoredFile(item)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>Herunterladen</button><button onClick={() => removeItem("dateien", item.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>Entfernen</button></div></div>)}
           {(akte.dateien || []).length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Noch keine Dateien hinterlegt.</p>}
         </AkteSection>
 
@@ -1083,6 +1101,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
           </AkteSection>
         </div>
       </div>
+      {pdfPreview && <PdfPreviewModal file={pdfPreview} onClose={() => setPdfPreview(null)} />}
     </div>
   );
 }
@@ -2038,9 +2057,34 @@ function NewClientModal({ einrichtungen, onClose, onSave }) {
 
 function Modal({ children, onClose, maxWidth = 540 }) {
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 1000, padding: "40px 20px", overflowY: "auto" }} onClick={onClose}>
-      <div style={{ background: "#fff", borderRadius: 18, padding: "32px 36px", width: "100%", maxWidth, boxShadow: "0 24px 80px rgba(0,0,0,.25)", animation: "slideUp .25s ease" }} onClick={e => e.stopPropagation()}>{children}</div>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 1000, padding: "40px 20px", overflowY: "auto" }} onClick={onClose}>
+      <div style={{ background: "#fff", borderRadius: 12, padding: "32px 36px", width: "100%", maxWidth, boxShadow: "0 24px 80px rgba(15,23,42,.24)", animation: "slideUp .25s ease" }} onClick={e => e.stopPropagation()}>{children}</div>
     </div>
+  );
+}
+
+function PdfPreviewModal({ file, onClose }) {
+  const printPdf = () => {
+    const w = window.open(file.url, "_blank");
+    if (w) w.addEventListener("load", () => w.print(), { once: true });
+  };
+  return (
+    <Modal onClose={onClose} maxWidth={1100}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 16, flexWrap: "wrap" }}>
+        <div>
+          <h2 style={{ ...cardTitle, margin: 0 }}>PDF-Vorschau</h2>
+          <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>{file.name}</p>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={() => window.open(file.url, "_blank")} style={btnSecondary}>Herunterladen</button>
+          <button onClick={printPdf} style={btnSecondary}>Drucken</button>
+          <button onClick={onClose} style={btnPrimary}>Schließen</button>
+        </div>
+      </div>
+      <div style={{ height: "72vh", minHeight: 420, border: "1px solid #cbd5e1", borderRadius: 10, overflow: "hidden", background: "#f8fafc" }}>
+        <iframe src={file.url} title={file.name || "PDF-Vorschau"} style={{ width: "100%", height: "100%", border: "none", display: "block" }} />
+      </div>
+    </Modal>
   );
 }
 
@@ -2053,12 +2097,12 @@ function FormField({ label, children }) {
   );
 }
 
-const inputStyle = { width: "100%", padding: "10px 14px", border: "2px solid #e2e8f0", borderRadius: 10, fontSize: 14, fontFamily: "'DM Sans',sans-serif", color: "#1e293b", background: "#f8fafc", boxSizing: "border-box", outline: "none", transition: "border-color .2s" };
-const btnPrimary = { background: "linear-gradient(135deg,#1a4480,#1d6fa4)", color: "#fff", border: "none", borderRadius: 10, padding: "10px 22px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", display: "inline-flex", alignItems: "center", gap: 8, transition: "opacity .2s", whiteSpace: "nowrap" };
-const btnSecondary = { background: "#f1f5f9", color: "#475569", border: "2px solid #e2e8f0", borderRadius: 10, padding: "9px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", transition: "all .2s" };
-const card = { background: "#fff", borderRadius: 16, padding: "24px 28px", boxShadow: "0 2px 12px rgba(0,0,0,.06)", marginBottom: 20 };
-const cardTitle = { fontFamily: "'DM Serif Display',serif", fontSize: 18, margin: "0 0 16px", color: "#0f2647" };
-const pageTitle = { fontFamily: "'DM Serif Display',serif", fontSize: 32, color: "#0f2647", margin: "0 0 6px" };
+const inputStyle = { width: "100%", padding: "10px 14px", border: "1px solid #cbd5e1", borderRadius: 8, fontSize: 14, fontFamily: "'DM Sans',sans-serif", color: "#1f2937", background: "#fff", boxSizing: "border-box", outline: "none", transition: "border-color .2s, box-shadow .2s" };
+const btnPrimary = { background: "#1e3a5f", color: "#fff", border: "1px solid #1e3a5f", borderRadius: 8, padding: "10px 20px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", display: "inline-flex", alignItems: "center", gap: 8, transition: "opacity .2s, background .2s", whiteSpace: "nowrap" };
+const btnSecondary = { background: "#fff", color: "#334155", border: "1px solid #cbd5e1", borderRadius: 8, padding: "9px 18px", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", transition: "all .2s" };
+const card = { background: "#fff", borderRadius: 12, padding: "24px 28px", boxShadow: "0 1px 6px rgba(15,23,42,.06)", border: "1px solid #e2e8f0", marginBottom: 20 };
+const cardTitle = { fontFamily: "'DM Sans',sans-serif", fontSize: 17, fontWeight: 700, margin: "0 0 16px", color: "#1f2937" };
+const pageTitle = { fontFamily: "'DM Sans',sans-serif", fontSize: 32, fontWeight: 700, color: "#1f2937", margin: "0 0 6px" };
 const pageSubtitle = { color: "#64748b", fontSize: 15, margin: "0 0 28px" };
 
 const globalStyles = `
@@ -2068,13 +2112,13 @@ const globalStyles = `
   @keyframes fadeIn { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:none } }
   @keyframes slideUp { from { opacity:0; transform:translateY(16px) } to { opacity:1; transform:none } }
   @keyframes spin { to { transform: rotate(360deg) } }
-  input:focus, select:focus, textarea:focus { border-color: #1a4480 !important; outline: none; }
+  input:focus, select:focus, textarea:focus { border-color: #1e3a5f !important; box-shadow: 0 0 0 3px rgba(30,58,95,.10); outline: none; }
   button:hover { opacity: .87; }
   ::-webkit-scrollbar { width: 6px } ::-webkit-scrollbar-track { background:#f1f5f9 } ::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:3px }
 
-  .app-layout { display: flex; min-height: 100vh; background: #f0f3f8; font-family: 'DM Sans', sans-serif; }
+  .app-layout { display: flex; min-height: 100vh; background: #f6f8fb; font-family: 'DM Sans', sans-serif; color: #1f2937; }
   .main-wrapper { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .sidebar { width: 230px; background: linear-gradient(180deg,#0f2647 0%,#12325a 100%); display: flex; flex-direction: column; padding: 24px 0 0; color: #fff; flex-shrink: 0; overflow: hidden; }
+  .sidebar { width: 230px; background: #172033; display: flex; flex-direction: column; padding: 24px 0 0; color: #fff; flex-shrink: 0; overflow: hidden; }
   .main-content { flex: 1; padding: 36px 40px; overflow-y: auto; }
   .mobile-header { display: none; }
   .sidebar-overlay { display: none; }
