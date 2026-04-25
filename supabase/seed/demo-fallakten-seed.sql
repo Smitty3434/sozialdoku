@@ -1,6 +1,6 @@
 -- Demo-Fallakten fuer SozialDoku
 -- Ausfuehren im Supabase SQL Editor.
--- Voraussetzung: In public.nutzer existiert die Demo-Fachkraft test@deinprojekt.de.
+-- Voraussetzung: In auth.users und public.nutzer existiert die Demo-Fachkraft test@deinprojekt.de.
 -- Das Skript ist idempotent: vorhandene Demo-Akten mit DEMO-2026-* werden vorher entfernt.
 
 begin;
@@ -13,14 +13,15 @@ declare
   v_li_id bigint;
   v_ethan_id bigint;
 begin
-  select id, name
+  select n.id, n.name
     into v_user_id, v_user_name
-    from nutzer
-   where email = 'test@deinprojekt.de'
+    from public.nutzer n
+    join auth.users au on au.id = n.id
+   where au.email = 'test@deinprojekt.de'
    limit 1;
 
   if v_user_id is null then
-    raise exception 'Demo-Fachkraft test@deinprojekt.de wurde in public.nutzer nicht gefunden. Bitte zuerst den Demo-Nutzer anlegen bzw. einmal einloggen.';
+    raise exception 'Demo-Fachkraft test@deinprojekt.de wurde nicht ueber auth.users/public.nutzer gefunden. Bitte zuerst den Demo-Nutzer anlegen bzw. einmal einloggen.';
   end if;
 
   -- Cleanup nur fuer eindeutig markierte Demo-Akten.
@@ -46,24 +47,21 @@ begin
    where aktenzeichen in ('DEMO-2026-MK', 'DEMO-2026-LW', 'DEMO-2026-EM');
 
   insert into klienten
-    (name, dob, einrichtung, status, aktenzeichen, telefon, email, aufnahmedatum, hilfeart, adresse, anmerkungen, created_by)
+    (name, dob, einrichtung, status, aktenzeichen, created_by)
   values
-    ('Mateo Kovačić', '2012-09-14', 'AWO Zentrum Nord', 'aktiv', 'DEMO-2026-MK', '+49 30 5550101', 'familie.kovacic@example.invalid', '2026-02-03', 'Schulbezogene Sozialarbeit / SPFH',
-     'Musterstrasse 18, 10115 Berlin', 'Demo-Akte. Schwerpunkt: Schule, Tagesstruktur, Abstimmung mit ASD.', v_user_id)
+    ('Mateo Kovačić', '2012-09-14', 'AWO Zentrum Nord', 'aktiv', 'DEMO-2026-MK', v_user_id)
   returning id into v_mateo_id;
 
   insert into klienten
-    (name, dob, einrichtung, status, aktenzeichen, telefon, email, aufnahmedatum, hilfeart, adresse, anmerkungen, created_by)
+    (name, dob, einrichtung, status, aktenzeichen, created_by)
   values
-    ('Li Wei', '2007-04-22', 'Caritas Sued', 'aktiv', 'DEMO-2026-LW', '+49 30 5550102', 'li.wei@example.invalid', '2026-01-19', 'Jugendberufshilfe / Uebergang Schule-Beruf',
-     'Beispielweg 7, 12045 Berlin', 'Demo-Akte. Schwerpunkt: Bewerbung, Berufsorientierung, realistische Anschlussperspektive.', v_user_id)
+    ('Li Wei', '2007-04-22', 'Caritas Sued', 'aktiv', 'DEMO-2026-LW', v_user_id)
   returning id into v_li_id;
 
   insert into klienten
-    (name, dob, einrichtung, status, aktenzeichen, telefon, email, aufnahmedatum, hilfeart, adresse, anmerkungen, created_by)
+    (name, dob, einrichtung, status, aktenzeichen, created_by)
   values
-    ('Ethan Miller', '2010-11-03', 'Diakonie West', 'aktiv', 'DEMO-2026-EM', '+49 30 5550103', 'familie.miller@example.invalid', '2026-03-04', 'Ambulante Erziehungshilfe',
-     'Demostrasse 42, 10557 Berlin', 'Demo-Akte. Schwerpunkt: Alltagsstruktur, Terminverbindlichkeit, niedrigschwellige Unterstuetzung.', v_user_id)
+    ('Ethan Miller', '2010-11-03', 'Diakonie West', 'aktiv', 'DEMO-2026-EM', v_user_id)
   returning id into v_ethan_id;
 
   insert into zustaendigkeit_intern (klient_id, nutzer_id, funktion, created_by) values
@@ -100,7 +98,7 @@ begin
     (v_mateo_id, 'Rueckmeldung Schule einholen', 'Kurzer Austausch mit Klassenleitung zu Anwesenheit, Material und Pausensituation.', 'offen', '2026-04-29', v_user_id),
     (v_mateo_id, 'ASD-Hilfeplangespraech vorbereiten', 'Aktuelle Beobachtungen, Fehlzeitenuebersicht und Zielstand fuer das Gespraech strukturieren.', 'offen', '2026-05-03', v_user_id),
     (v_li_id, 'Lebenslauf finalisieren', 'Lebenslauf mit Li pruefen, Luecken besprechen und PDF-Version ablegen.', 'offen', '2026-04-28', v_user_id),
-    (v_li_id, 'Praktikumsbetriebe recherchieren', 'Drei Betriebe im Bereich Lager/Logistik und Einzelhandel vormerken und Kontaktwege klaeren.', 'in Bearbeitung', '2026-05-02', v_user_id),
+    (v_li_id, 'Praktikumsbetriebe recherchieren', 'Drei Betriebe im Bereich Lager/Logistik und Einzelhandel vormerken und Kontaktwege klaeren.', 'in_bearbeitung', '2026-05-02', v_user_id),
     (v_ethan_id, 'Wochenplan aktualisieren', 'Plan fuer Schule, Sport, Lernzeit und freie Zeit gemeinsam mit Ethan und Mutter ueberarbeiten.', 'offen', '2026-04-30', v_user_id),
     (v_ethan_id, 'Termin beim KJGD bestaetigen', 'Rueckruf der Mutter abwarten und Termin im Kalender ergaenzen.', 'offen', '2026-05-06', v_user_id);
 
@@ -136,11 +134,11 @@ begin
      v_user_name, v_user_id);
 
   insert into notizen
-    (titel, text, farbe, typ, klient_id, tags, pinned, autor, datum, created_by)
+    (titel, text, farbe, typ, klient_id, tags, pinned, autor, created_by)
   values
-    ('Mateo: Morgenroutine beobachten', 'Beim naechsten Kontakt gezielt nach Ablauf vor Schulbeginn fragen. Mutter moechte kurze Checkliste am Kuehlschrank testen.', 'blau', 'team', v_mateo_id, array['schule','struktur','asd'], true, v_user_name, '2026-04-20', v_user_id),
-    ('Li: Bewerbungsmappe', 'PDF-Version erst nach finaler Rechtschreibpruefung versenden. Li moechte eine schlichte Vorlage ohne Foto nutzen.', 'gruen', 'team', v_li_id, array['bewerbung','bildung-beruf'], true, v_user_name, '2026-04-18', v_user_id),
-    ('Ethan: Terminverbindlichkeit', 'Positive Rueckmeldung geben, wenn Ethan Termine selbst in den Wochenplan eintraegt. Reminder am Vortag hat gut funktioniert.', 'gelb', 'team', v_ethan_id, array['alltag','termine'], false, v_user_name, '2026-04-22', v_user_id);
+    ('Mateo: Morgenroutine beobachten', 'Beim naechsten Kontakt gezielt nach Ablauf vor Schulbeginn fragen. Mutter moechte kurze Checkliste am Kuehlschrank testen.', 'blau', 'team', v_mateo_id, array['schule','struktur','asd'], true, v_user_name, v_user_id),
+    ('Li: Bewerbungsmappe', 'PDF-Version erst nach finaler Rechtschreibpruefung versenden. Li moechte eine schlichte Vorlage ohne Foto nutzen.', 'gruen', 'team', v_li_id, array['bewerbung','bildung-beruf'], true, v_user_name, v_user_id),
+    ('Ethan: Terminverbindlichkeit', 'Positive Rueckmeldung geben, wenn Ethan Termine selbst in den Wochenplan eintraegt. Reminder am Vortag hat gut funktioniert.', 'gelb', 'team', v_ethan_id, array['alltag','termine'], false, v_user_name, v_user_id);
 end $$;
 
 commit;
