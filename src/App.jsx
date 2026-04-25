@@ -37,8 +37,52 @@ const NOTIZ_FARBEN = {
   lila:  { bg: "#ede9fe", border: "#8b5cf6", label: "Lila" },
 };
 
+const FACHBEREICH_LABELS = {
+  soziales: "Soziales",
+  gesundheit: "Gesundheit",
+  bildungBeruf: "Bildung/Beruf",
+  finanzen: "Finanzen",
+  behoerden: "Behörden",
+  freizeit: "Freizeit",
+};
+const FACHBEREICH_FARBEN = {
+  soziales: "#0f766e",
+  gesundheit: "#dc2626",
+  bildungBeruf: "#2563eb",
+  finanzen: "#7c3aed",
+  behoerden: "#475569",
+  freizeit: "#ea580c",
+};
+const normalizeBereichKey = (key) => key === "bildungBeruf" ? "bildung_beruf" : key;
+const denormalizeBereichKey = (key) => key === "bildung_beruf" ? "bildungBeruf" : key;
+const fachbereichLabel = (key) => FACHBEREICH_LABELS[denormalizeBereichKey(key)] || key;
+const fachbereichFarbe = (key) => FACHBEREICH_FARBEN[denormalizeBereichKey(key)] || "#475569";
+const createEmptyFallakte = (client = {}) => ({
+  klient: {
+    telefon: client.telefon || "",
+    email: client.email || "",
+    beginnHilfe: client.aufnahmedatum || "",
+    adresse: [client.adresse, client.plz, client.ort].filter(Boolean).join(", "),
+    hilfeart: client.hilfeart || "",
+    bezugspersonen: "",
+    besondereHinweise: client.anmerkungen || "",
+  },
+  aufgaben: [],
+  intern: [],
+  extern: [],
+  ziele: [],
+  dateien: [],
+  fachbereiche: {
+    soziales: [],
+    gesundheit: [],
+    bildungBeruf: [],
+    finanzen: [],
+    behoerden: [],
+    freizeit: [],
+  },
+});
+
 // ── Helpers ───────────────────────────────────────────────────────
-const td = new Date();
 const ds = (d) => d.toISOString().split("T")[0];
 const formatDate = (d) => d ? new Date(d).toLocaleDateString("de-DE") : "–";
 const typeColor = (t) => ({ Fallverlauf: "#2563a8", "Maßnahme": "#16825a", Massnahme: "#16825a", Stunden: "#b45309" }[t] || "#555");
@@ -62,6 +106,7 @@ export default function App() {
   const [view, setView] = useState("dashboard");
   const [clients, setClients] = useState([]);
   const [eintraege, setEintraege] = useState({});
+  const [fallakten, setFallakten] = useState({});
   const [users, setUsers] = useState([]);
   const [termine, setTermine] = useState([]);
   const [notizen, setNotizen] = useState([]);
@@ -81,52 +126,150 @@ export default function App() {
 
   const showToast = (msg, color = "#16825a") => { setToast({ msg, color }); setTimeout(() => setToast(null), 2800); };
 
-  // ── Auth: Session überwachen ────────────────────────────────────
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session) loadUserProfile(session.user.id);
-      else setLoading(false);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      if (session) loadUserProfile(session.user.id);
-      else { setUser(null); setLoading(false); }
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
   // ── Profil laden ────────────────────────────────────────────────
   const loadUserProfile = async (uid) => {
-    const { data, error } = await supabase.from("nutzer").select("*").eq("id", uid).single();
+    const { data } = await supabase.from("nutzer").select("*").eq("id", uid).single();
     if (data) setUser(data);
     setLoading(false);
   };
 
-  // ── Daten laden nach Login ──────────────────────────────────────
-  useEffect(() => {
-    if (!session) return;
-    loadClients();
-    loadUsers();
-    loadTermine();
-    loadNotizen();
-  }, [session]);
-
   const loadClients = async () => {
-    const { data } = await supabase.from("klienten").select("*").order("name");
-    if (data) {
-      setClients(data);
-      // Einträge für alle Klienten laden
-      const { data: eData } = await supabase.from("eintraege").select("*").order("datum", { ascending: false });
-      if (eData) {
-        const grouped = {};
-        eData.forEach(e => {
-          if (!grouped[e.klient_id]) grouped[e.klient_id] = [];
-          grouped[e.klient_id].push({ ...e, id: e.id, typ: e.typ === "Massnahme" ? "Maßnahme" : e.typ });
-        });
-        setEintraege(grouped);
-      }
+    const { data, error } = await supabase
+      .from("klienten")
+      .select("*")
+      .order("name");
+
+    if (error) {
+      showToast("Klienten konnten nicht geladen werden.", "#c0392b");
+      return;
     }
+
+    const mappedClients = (data || []).map(c => ({
+      ...c,
+      dob: c.geburtsdatum || c.dob || null,
+    }));
+    setClients(mappedClients);
+
+    const ids = mappedClients.map(c => c.id);
+    if (!ids.length) {
+      setEintraege({});
+      setFallakten({});
+      return;
+    }
+
+    const [
+      docsRes,
+      tasksRes,
+      goalsRes,
+      internRes,
+      externRes,
+      filesRes,
+    ] = await Promise.all([
+      supabase.from("dokumentationen").select("*").in("klient_id", ids).order("datum", { ascending: false }).order("created_at", { ascending: false }),
+      supabase.from("aufgaben").select("*").in("klient_id", ids).order("datum", { ascending: false }),
+      supabase.from("ziele").select("*").in("klient_id", ids).order("datum", { ascending: false }),
+      supabase.from("zustaendigkeit_intern").select("*, nutzer:nutzer_id(id,name,rolle)").in("klient_id", ids).order("created_at", { ascending: false }),
+      supabase.from("zustaendigkeit_extern").select("*").in("klient_id", ids).order("created_at", { ascending: false }),
+      supabase.from("dateien").select("*").in("klient_id", ids).order("datum", { ascending: false }).order("created_at", { ascending: false }),
+    ]);
+
+    const byClient = {};
+    mappedClients.forEach(c => {
+      byClient[c.id] = createEmptyFallakte(c);
+    });
+
+    const groupedEntries = {};
+
+    (docsRes.data || []).forEach(d => {
+      if (!groupedEntries[d.klient_id]) groupedEntries[d.klient_id] = [];
+      groupedEntries[d.klient_id].push({
+        id: d.id,
+        datum: d.datum,
+        typ: d.bereich === "allgemein" ? "Fallverlauf" : fachbereichLabel(d.bereich),
+        titel: d.titel,
+        text: d.inhalt,
+        fachkraft: d.erstellt_von_name || "",
+        stunden: null,
+      });
+
+      if (d.bereich !== "allgemein" && byClient[d.klient_id]) {
+        const key = denormalizeBereichKey(d.bereich);
+        if (!byClient[d.klient_id].fachbereiche[key]) return;
+        byClient[d.klient_id].fachbereiche[key] = [
+          {
+            id: d.id,
+            titel: d.titel,
+            text: d.inhalt,
+            datum: d.datum,
+            autor: d.erstellt_von_name || "",
+          },
+          ...(byClient[d.klient_id].fachbereiche[key] || []),
+        ];
+      }
+    });
+
+    (tasksRes.data || []).forEach(t => {
+      if (!byClient[t.klient_id]) return;
+      byClient[t.klient_id].aufgaben.push({
+        id: t.id,
+        titel: t.titel,
+        status: t.status,
+        notiz: t.beschreibung || "",
+        datum: t.datum,
+      });
+    });
+
+    (goalsRes.data || []).forEach(z => {
+      if (!byClient[z.klient_id]) return;
+      byClient[z.klient_id].ziele.push({
+        id: z.id,
+        titel: z.titel,
+        status: z.status,
+        notiz: z.beschreibung || "",
+        datum: z.startdatum || z.datum,
+      });
+    });
+
+    (internRes.data || []).forEach(i => {
+      if (!byClient[i.klient_id]) return;
+      byClient[i.klient_id].intern.push({
+        id: i.id,
+        userId: i.nutzer_id,
+        name: i.nutzer?.name || "",
+        rolle: i.funktion || i.nutzer?.rolle || "",
+        telefon: "",
+        email: "",
+      });
+    });
+
+    (externRes.data || []).forEach(e => {
+      if (!byClient[e.klient_id]) return;
+      byClient[e.klient_id].extern.push({
+        id: e.id,
+        name: e.ansprechperson || e.institution,
+        stelle: e.institution,
+        rolle: e.funktion || "",
+        telefon: e.telefon || "",
+        email: e.email || "",
+      });
+    });
+
+    (filesRes.data || []).forEach(f => {
+      if (!byClient[f.klient_id]) return;
+      byClient[f.klient_id].dateien.push({
+        id: f.id,
+        name: f.original_dateiname || f.dateiname,
+        kategorie: f.kategorie || "allgemein",
+        datum: f.datum,
+        size: f.dateigroesse,
+        mimeType: f.mime_type,
+        bucket: f.bucket,
+        path: f.speicherpfad,
+      });
+    });
+
+    setEintraege(groupedEntries);
+    setFallakten(byClient);
   };
 
   const loadUsers = async () => {
@@ -143,6 +286,30 @@ export default function App() {
     const { data } = await supabase.from("notizen").select("*").order("pinned", { ascending: false });
     if (data) setNotizen(data.map(n => ({ ...n, klientId: n.klient_id })));
   };
+
+  // ── Auth: Session überwachen ────────────────────────────────────
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) loadUserProfile(session.user.id);
+      else setLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) loadUserProfile(session.user.id);
+      else { setUser(null); setLoading(false); }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // ── Daten laden nach Login ──────────────────────────────────────
+  useEffect(() => {
+    if (!session) return;
+    const loadInitialData = async () => {
+      await Promise.all([loadClients(), loadUsers(), loadTermine(), loadNotizen()]);
+    };
+    loadInitialData();
+  }, [session]);
 
   // ── CRUD: Klienten ──────────────────────────────────────────────
   const addClient = async (clientData) => {
@@ -246,18 +413,6 @@ export default function App() {
     showToast(aktiv ? "Nutzer aktiviert ✓" : "Nutzer deaktiviert", aktiv ? "#16825a" : "#c0392b");
   };
 
-  // Notizen-Wrapper für Kompatibilität mit bestehenden Komponenten
-  const setNotizenCompat = (updater) => {
-    if (typeof updater === "function") {
-      setNotizen(prev => {
-        const next = updater(prev);
-        return next;
-      });
-    } else {
-      setNotizen(updater);
-    }
-  };
-
   const upcomingReminders = termine.filter(t => {
     if (!t.erinnerung) return false;
     const diff = (new Date(t.datum) - new Date()) / 86400000;
@@ -274,7 +429,7 @@ export default function App() {
   );
 
   if (!session) return <LoginScreen onLogin={async (email, pass) => {
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password: pass });
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
     if (error) return "Ungültige Zugangsdaten.";
     return null;
   }} />;
@@ -318,12 +473,15 @@ export default function App() {
                 onExport={() => exportPDF(selectedClient, eintraege[selectedClient.id] || [])}
                 onKiBericht={() => setView("kibericht")}
                 notizen={notizen}
-                setNotizen={async (notiz) => { await addNotiz({ ...notiz, klientId: selectedClient.id }); }}
                 deleteNotiz={deleteNotiz}
                 user={user}
+                users={users}
                 showToast={showToast}
+                fallakten={fallakten}
+                setFallakten={setFallakten}
               />
             )}
+            {view === "notizen" && <NotizenView notizen={notizen} onAdd={addNotiz} onUpdate={updateNotiz} onDelete={deleteNotiz} user={user} clients={clients} showToast={showToast} />}
             {view === "kalender" && <KalenderView termine={termine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} clients={clients} user={user} showToast={showToast} />}
             {view === "benachrichtigungen" && <BenachrichtigungenView termine={termine} clients={clients} setView={setView} setSelectedClient={setSelectedClient} />}
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
@@ -596,7 +754,7 @@ function AkteSection({ sectionKey, title, color = "#0f2647", children, rightCont
   );
 }
 
-function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBericht, canEdit, notizen, setNotizen, user, users, showToast, fallakten, setFallakten }) {
+function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBericht, canEdit, notizen, user, users, showToast, fallakten, setFallakten }) {
   const [openMap, setOpenMap] = useState({ klient: true, aufgaben: true, intern: false, extern: false, ziele: true, dateien: false, soziales: true, gesundheit: false, bildungBeruf: false, finanzen: false, behoerden: false, freizeit: false, dokumentation: true, notizen: false });
   const [newDocs, setNewDocs] = useState({ soziales: { titel: "", text: "", datum: ds(new Date()) }, gesundheit: { titel: "", text: "", datum: ds(new Date()) }, bildungBeruf: { titel: "", text: "", datum: ds(new Date()) }, finanzen: { titel: "", text: "", datum: ds(new Date()) }, behoerden: { titel: "", text: "", datum: ds(new Date()) }, freizeit: { titel: "", text: "", datum: ds(new Date()) } });
   const [quickFields, setQuickFields] = useState({ aufgabe: "", aufgabeDatum: ds(new Date()), externName: "", externStelle: "", externTelefon: "", externEmail: "", ziel: "", zielDatum: ds(new Date()), dateiKategorie: "Dokument", dateiDatum: ds(new Date()) });
@@ -614,56 +772,177 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
     });
   };
 
-  const updateKlient = (key, value) => patchAkte(cur => ({ ...cur, klient: { ...cur.klient, [key]: value } }));
-  const addSimpleItem = (section, payload) => patchAkte(cur => ({ ...cur, [section]: [{ id: Date.now(), ...payload }, ...(cur[section] || [])] }));
-  const addFachDoc = (bereich) => {
+  const updateKlient = async (key, value) => {
+    patchAkte(cur => ({ ...cur, klient: { ...cur.klient, [key]: value } }));
+    const dbPayload = {};
+    if (key === "telefon") dbPayload.telefon = value;
+    if (key === "email") dbPayload.email = value;
+    if (key === "beginnHilfe") dbPayload.aufnahmedatum = value || null;
+    if (key === "hilfeart") dbPayload.hilfeart = value;
+    if (key === "adresse") dbPayload.adresse = value;
+    if (key === "besondereHinweise") dbPayload.anmerkungen = value;
+    if (Object.keys(dbPayload).length) {
+      await supabase.from("klienten").update(dbPayload).eq("id", client.id);
+    }
+  };
+
+  const addSimpleItem = async (section, payload) => {
+    if (section === "aufgaben") {
+      const { data, error } = await supabase.from("aufgaben").insert([{
+        klient_id: client.id,
+        titel: payload.titel,
+        beschreibung: payload.notiz || "",
+        status: payload.status || "offen",
+        datum: payload.datum || ds(new Date()),
+        created_by: user?.id || null,
+      }]).select().single();
+      if (error) return showToast("Aufgabe konnte nicht gespeichert werden.", "#c0392b");
+      patchAkte(cur => ({ ...cur, aufgaben: [{ id: data.id, titel: data.titel, status: data.status, notiz: data.beschreibung || "", datum: data.datum }, ...(cur.aufgaben || [])] }));
+      return;
+    }
+    if (section === "ziele") {
+      const { data, error } = await supabase.from("ziele").insert([{
+        klient_id: client.id,
+        titel: payload.titel,
+        beschreibung: payload.notiz || "",
+        status: payload.status || "laufend",
+        startdatum: payload.datum || ds(new Date()),
+        datum: payload.datum || ds(new Date()),
+        created_by: user?.id || null,
+      }]).select().single();
+      if (error) return showToast("Ziel konnte nicht gespeichert werden.", "#c0392b");
+      patchAkte(cur => ({ ...cur, ziele: [{ id: data.id, titel: data.titel, status: data.status, notiz: data.beschreibung || "", datum: data.startdatum || data.datum }, ...(cur.ziele || [])] }));
+      return;
+    }
+    if (section === "extern") {
+      const { data, error } = await supabase.from("zustaendigkeit_extern").insert([{
+        klient_id: client.id,
+        institution: payload.stelle || payload.name || "",
+        ansprechperson: payload.name || "",
+        funktion: payload.rolle || "",
+        telefon: payload.telefon || "",
+        email: payload.email || "",
+        created_by: user?.id || null,
+      }]).select().single();
+      if (error) return showToast("Externe Zuständigkeit konnte nicht gespeichert werden.", "#c0392b");
+      patchAkte(cur => ({ ...cur, extern: [{ id: data.id, name: data.ansprechperson || data.institution, stelle: data.institution, rolle: data.funktion || "", telefon: data.telefon || "", email: data.email || "" }, ...(cur.extern || [])] }));
+      return;
+    }
+    if (section === "intern") {
+      const picked = interneAuswahl.find(u => String(u.id) === String(payload.userId || payload.id || payload.nutzer_id));
+      const nutzerId = payload.userId || payload.id || payload.nutzer_id;
+      const { data, error } = await supabase.from("zustaendigkeit_intern").insert([{
+        klient_id: client.id,
+        nutzer_id: nutzerId,
+        funktion: payload.rolle || picked?.rolle || "Fachkraft",
+        created_by: user?.id || null,
+      }]).select().single();
+      if (error) return showToast("Interne Zuständigkeit konnte nicht gespeichert werden.", "#c0392b");
+      patchAkte(cur => ({ ...cur, intern: [{ id: data.id, userId: nutzerId, name: payload.name || picked?.name || "", rolle: data.funktion || picked?.rolle || "", telefon: "", email: picked?.email || "" }, ...(cur.intern || [])] }));
+    }
+  };
+
+  const addFachDoc = async (bereich) => {
     const form = newDocs[bereich];
     if (!form.titel.trim() || !form.text.trim()) return showToast("Bitte Titel und Inhalt eingeben.", "#c0392b");
+    const dbBereich = normalizeBereichKey(bereich);
+    const { data, error } = await supabase.from("dokumentationen").insert([{
+      klient_id: client.id,
+      bereich: dbBereich,
+      datum: form.datum || ds(new Date()),
+      titel: form.titel,
+      inhalt: form.text,
+      erstellt_von_name: user?.name || "",
+      created_by: user?.id || null,
+    }]).select().single();
+    if (error) return showToast("Dokumentation konnte nicht gespeichert werden.", "#c0392b");
     patchAkte(cur => ({
       ...cur,
       fachbereiche: {
         ...cur.fachbereiche,
-        [bereich]: [{ id: Date.now(), titel: form.titel, text: form.text, datum: form.datum || ds(new Date()), autor: user.name }, ...(cur.fachbereiche?.[bereich] || [])],
+        [bereich]: [{ id: data.id, titel: data.titel, text: data.inhalt, datum: data.datum, autor: data.erstellt_von_name || user?.name || "" }, ...(cur.fachbereiche?.[bereich] || [])],
       },
     }));
     setNewDocs(prev => ({ ...prev, [bereich]: { titel: "", text: "", datum: ds(new Date()) } }));
-    showToast(`${FACHBEREICH_LABELS[bereich]} ergänzt ✓`);
+    showToast(`${fachbereichLabel(dbBereich)} ergänzt ✓`);
   };
+
   const handleDateiUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      patchAkte(cur => ({
-        ...cur,
-        dateien: [{
-          id: Date.now(),
-          name: file.name,
-          kategorie: quickFields.dateiKategorie || "Dokument",
-          datum: quickFields.dateiDatum || ds(new Date()),
-          size: file.size,
-          mimeType: file.type || "application/octet-stream",
-          content: typeof result === "string" ? result : "",
-        }, ...(cur.dateien || [])]
-      }));
-      setQuickFields(p => ({ ...p, dateiKategorie: "Dokument", dateiDatum: ds(new Date()) }));
+    const safeName = `${client.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+    const bucket = "client-files";
+    const { error: uploadError } = await supabase.storage.from(bucket).upload(safeName, file, { upsert: false });
+    if (uploadError) {
+      showToast("Datei konnte nicht hochgeladen werden.", "#c0392b");
       event.target.value = "";
-      showToast("Datei hinzugefügt ✓");
+      return;
+    }
+    const categoryMap = {
+      "Dokument": "allgemein",
+      "Bewerbung": "bewerbung",
+      "Verfügung/Jugendamt": "jugendamt",
+      "Schule": "schule",
+      "Medizin": "medizin",
     };
-    reader.readAsDataURL(file);
+    const dbCategory = categoryMap[quickFields.dateiKategorie] || "allgemein";
+    const { data, error } = await supabase.from("dateien").insert([{
+      klient_id: client.id,
+      dateiname: file.name,
+      original_dateiname: file.name,
+      speicherpfad: safeName,
+      bucket,
+      kategorie: dbCategory,
+      datum: quickFields.dateiDatum || ds(new Date()),
+      dateigroesse: file.size,
+      mime_type: file.type || "",
+      created_by: user?.id || null,
+    }]).select().single();
+    if (error) return showToast("Datei-Metadaten konnten nicht gespeichert werden.", "#c0392b");
+    patchAkte(cur => ({
+      ...cur,
+      dateien: [{
+        id: data.id,
+        name: data.original_dateiname || data.dateiname,
+        kategorie: data.kategorie,
+        datum: data.datum,
+        size: data.dateigroesse,
+        mimeType: data.mime_type,
+        bucket: data.bucket,
+        path: data.speicherpfad,
+      }, ...(cur.dateien || [])]
+    }));
+    setQuickFields(p => ({ ...p, dateiKategorie: "Dokument", dateiDatum: ds(new Date()) }));
+    event.target.value = "";
+    showToast("Datei hinzugefügt ✓");
   };
-  const downloadStoredFile = (item) => {
-    if (!item?.content) return showToast("Für diese Datei liegt in der Demo kein Downloadinhalt vor.", "#c0392b");
-    const link = document.createElement("a");
-    link.href = item.content;
-    link.download = item.name || "download";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+
+  const downloadStoredFile = async (item) => {
+    if (!item?.path) return showToast("Für diese Datei liegt kein Speicherpfad vor.", "#c0392b");
+    const { data, error } = await supabase.storage.from(item.bucket || "client-files").createSignedUrl(item.path, 60);
+    if (error || !data?.signedUrl) return showToast("Download konnte nicht erstellt werden.", "#c0392b");
+    window.open(data.signedUrl, "_blank");
   };
-  const removeItem = (section, id) => patchAkte(cur => ({ ...cur, [section]: (cur[section] || []).filter(x => x.id !== id) }));
-  const removeDoc = (bereich, id) => patchAkte(cur => ({ ...cur, fachbereiche: { ...cur.fachbereiche, [bereich]: (cur.fachbereiche?.[bereich] || []).filter(x => x.id !== id) } }));
+
+  const removeItem = async (section, id) => {
+    const tableMap = { aufgaben: "aufgaben", ziele: "ziele", extern: "zustaendigkeit_extern", intern: "zustaendigkeit_intern", dateien: "dateien" };
+    const table = tableMap[section];
+    if (!table) return;
+    if (section === "dateien") {
+      const file = (akte.dateien || []).find(x => x.id === id);
+      if (file?.path) await supabase.storage.from(file.bucket || "client-files").remove([file.path]);
+    }
+    const { error } = await supabase.from(table).delete().eq("id", id);
+    if (error) return showToast("Eintrag konnte nicht gelöscht werden.", "#c0392b");
+    patchAkte(cur => ({ ...cur, [section]: (cur[section] || []).filter(x => x.id !== id) }));
+  };
+
+  const removeDoc = async (bereich, id) => {
+    const { error } = await supabase.from("dokumentationen").delete().eq("id", id);
+    if (error) return showToast("Dokumentation konnte nicht gelöscht werden.", "#c0392b");
+    patchAkte(cur => ({ ...cur, fachbereiche: { ...cur.fachbereiche, [bereich]: (cur.fachbereiche?.[bereich] || []).filter(x => x.id !== id) } }));
+  };
+
   const toggleSection = (key) => setOpenMap(prev => ({ ...prev, [key]: !prev[key] }));
 
   const chronoDokumentation = [
@@ -673,8 +952,8 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
       titel: item.titel,
       text: item.text,
       autor: item.autor,
-      quelle: FACHBEREICH_LABELS[bereich],
-      farbe: FACHBEREICH_FARBEN[bereich],
+      quelle: fachbereichLabel(bereich),
+      farbe: fachbereichFarbe(bereich),
     }))),
     ...eintraege.map(e => ({ id: `eintrag-${e.id}`, datum: e.datum, titel: e.titel, text: e.text, autor: e.fachkraft, quelle: e.typ, farbe: typeColor(e.typ) })),
   ].sort((a, b) => new Date(b.datum) - new Date(a.datum));
@@ -741,7 +1020,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
               <option value="">Fachkraft auswählen …</option>
               {interneAuswahl.map(u => <option key={u.id} value={u.id}>{u.name} · {u.rolle}</option>)}
             </select>
-            <button onClick={() => { const picked = interneAuswahl.find(u => String(u.id) === String(selectedInternUserId)); if (!picked) return showToast("Bitte eine Fachkraft auswählen.", "#c0392b"); addSimpleItem("intern", { name: picked.name, rolle: picked.rolle, telefon: "", email: picked.email }); setSelectedInternUserId(""); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Fachkraft</button>
+            <button onClick={() => { const picked = interneAuswahl.find(u => String(u.id) === String(selectedInternUserId)); if (!picked) return showToast("Bitte eine Fachkraft auswählen.", "#c0392b"); addSimpleItem("intern", { userId: picked.id, name: picked.name, rolle: picked.rolle, telefon: "", email: picked.email }); setSelectedInternUserId(""); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Fachkraft</button>
           </div>
           {(akte.intern || []).map(item => <div key={item.id} style={{ borderTop: "1px solid #f1f5f9", padding: "10px 0", display: "flex", justifyContent: "space-between", gap: 10 }}><div><p style={{ margin: 0, fontWeight: 700, fontSize: 13 }}>{item.name}</p><p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{item.rolle || "Fachkraft"}{item.telefon ? ` · ${item.telefon}` : ""}{item.email ? ` · ${item.email}` : ""}</p></div><button onClick={() => removeItem("intern", item.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>🗑</button></div>)}
           {(akte.intern || []).length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Keine internen Zuständigkeiten hinterlegt.</p>}
@@ -771,7 +1050,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
         </AkteSection>
 
         {Object.entries(FACHBEREICH_LABELS).map(([key, label]) => (
-          <AkteSection key={key} sectionKey={key} title={label} color={FACHBEREICH_FARBEN[key]} rightContent={<span style={{ fontSize: 12, color: FACHBEREICH_FARBEN[key] }}>{(akte.fachbereiche?.[key] || []).length}</span>} open={openMap[key]} onToggle={toggleSection}>
+          <AkteSection key={key} sectionKey={key} title={label} color={fachbereichFarbe(key)} rightContent={<span style={{ fontSize: 12, color: fachbereichFarbe(key) }}>{(akte.fachbereiche?.[key] || []).length}</span>} open={openMap[key]} onToggle={toggleSection}>
             <div style={{ background: "#f8fafc", borderRadius: 10, padding: 12, marginBottom: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
                 <input value={newDocs[key].titel} onChange={e => setNewDocs(prev => ({ ...prev, [key]: { ...prev[key], titel: e.target.value } }))} style={inputStyle} placeholder={`Titel für ${label}`} />
@@ -843,7 +1122,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, sho
                     {k && <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}>👤 {k.name}</p>}
                     {t.erinnerung && <span style={{ fontSize: 11, color: "#f59e0b" }}>🔔 Erinnerung aktiv</span>}
                   </div>
-                  <button onClick={() => { setTermine(prev => prev.filter(x => x.id !== t.id)); showToast("Termin gelöscht"); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 18, padding: 4 }}>✕</button>
+                  <button onClick={() => onDeleteTermin(t.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 18, padding: 4 }}>✕</button>
                 </div>
               </div>
             );
@@ -880,8 +1159,8 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, sho
             <button onClick={() => setShowNew(false)} style={btnSecondary}>Abbrechen</button>
             <button onClick={() => {
               if (!form.titel || !form.datum) return showToast("Bitte Titel und Datum angeben.", "#c0392b");
-              setTermine(prev => [...prev, { ...form, id: Date.now(), klientId: form.klientId ? parseInt(form.klientId) : null }]);
-              setShowNew(false); showToast("Termin gespeichert ✓");
+              onAddTermin(form);
+              setShowNew(false);
             }} style={btnPrimary}>Speichern</button>
           </div>
         </Modal>
@@ -993,8 +1272,13 @@ function VorlagenView({ vorlagen }) {
 
 function NutzerView({ users, onToggle, showToast }) {
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", password: "demo123", rolle: "Fachkraft", einrichtung: einrichtungen[0], aktiv: true });
+  const [form, setForm] = useState({ name: "", email: "", password: "demo123", rolle: "Fachkraft", einrichtung: EINRICHTUNGEN[0], aktiv: true });
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const createUserHint = () => {
+    if (!form.name || !form.email) return showToast("Name und E-Mail erforderlich.", "#c0392b");
+    showToast("Nutzeranlage braucht die Supabase Auth/Admin API.", "#b45309");
+    setShowNew(false);
+  };
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
@@ -1012,7 +1296,7 @@ function NutzerView({ users, onToggle, showToast }) {
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ ...rolleStyle(u.rolle), padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{u.rolle}</span>
               <span style={{ background: u.aktiv ? "#dcfce7" : "#fee2e2", color: u.aktiv ? "#16a34a" : "#dc2626", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{u.aktiv ? "Aktiv" : "Deaktiviert"}</span>
-              <button onClick={() => { setUsers(prev => prev.map(x => x.id === u.id ? { ...x, aktiv: !x.aktiv } : x)); showToast(u.aktiv ? "Nutzer deaktiviert" : "Nutzer aktiviert ✓", u.aktiv ? "#c0392b" : "#16825a"); }} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>{u.aktiv ? "Deaktivieren" : "Aktivieren"}</button>
+              <button onClick={() => onToggle(u.id, !u.aktiv)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>{u.aktiv ? "Deaktivieren" : "Aktivieren"}</button>
             </div>
           </div>
         ))}
@@ -1025,19 +1309,14 @@ function NutzerView({ users, onToggle, showToast }) {
           <FormField label="Temporäres Passwort"><input value={form.password} onChange={e => set("password", e.target.value)} style={inputStyle} /></FormField>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <FormField label="Rolle"><select value={form.rolle} onChange={e => set("rolle", e.target.value)} style={inputStyle}>{ROLLEN.map(r => <option key={r}>{r}</option>)}</select></FormField>
-            <FormField label="Einrichtung"><select value={form.einrichtung} onChange={e => set("einrichtung", e.target.value)} style={inputStyle}>{einrichtungen.map(e => <option key={e}>{e}</option>)}</select></FormField>
+            <FormField label="Einrichtung"><select value={form.einrichtung} onChange={e => set("einrichtung", e.target.value)} style={inputStyle}>{EINRICHTUNGEN.map(e => <option key={e}>{e}</option>)}</select></FormField>
           </div>
           <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#0369a1" }}>
             <strong>Rollen:</strong> 🔴 <strong>Admin</strong> – alle Rechte · 🟣 <strong>Leitung</strong> – alle Klienten lesen · 🟢 <strong>Fachkraft</strong> – Klienten verwalten
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button onClick={() => setShowNew(false)} style={btnSecondary}>Abbrechen</button>
-            <button onClick={() => {
-              if (!form.name || !form.email) return showToast("Name und E-Mail erforderlich.", "#c0392b");
-              const avatar = form.name.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
-              setUsers(prev => [...prev, { ...form, id: Date.now(), avatar }]);
-              setShowNew(false); showToast("Nutzer angelegt ✓");
-            }} style={btnPrimary}>Anlegen</button>
+            <button onClick={createUserHint} style={btnPrimary}>Anlegen</button>
           </div>
         </Modal>
       )}
@@ -1126,7 +1405,7 @@ function KIBerichtView({ clients, eintraege, user, kiSettings }) {
       });
       setBericht(text.trim());
       setTimeout(() => berichtRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
-    } catch (err) {
+    } catch {
       setError(kiSettings.provider === "ollama"
         ? `Ollama nicht erreichbar oder Modell nicht geladen. Prüfe URL (${kiSettings.ollamaUrl}) und Modell (${kiSettings.ollamaModel}).`
         : "Die KI-Antwort konnte nicht erzeugt werden.");
@@ -1276,15 +1555,6 @@ function KIBerichtView({ clients, eintraege, user, kiSettings }) {
   );
 }
 
-// ── Notizen View ───────────────────────────────────────────────────────────
-const NOTIZ_FARBEN = {
-  gelb:  { bg: "#fef9c3", border: "#f59e0b", label: "Gelb" },
-  rot:   { bg: "#fee2e2", border: "#ef4444", label: "Rot" },
-  gruen: { bg: "#dcfce7", border: "#22c55e", label: "Grün" },
-  blau:  { bg: "#dbeafe", border: "#3b82f6", label: "Blau" },
-  lila:  { bg: "#ede9fe", border: "#8b5cf6", label: "Lila" },
-};
-
 function NotizenView({ notizen, onAdd, onUpdate, onDelete, user, clients, showToast }) {
   const [filterTyp, setFilterTyp] = useState("alle");
   const [filterTag, setFilterTag] = useState(null);
@@ -1341,21 +1611,42 @@ function NotizenView({ notizen, onAdd, onUpdate, onDelete, user, clients, showTo
     setShowNew(true);
   };
 
-  const save = () => {
+  const save = async () => {
     if (!form.titel.trim()) return showToast("Bitte einen Titel eingeben.", "#c0392b");
     if (!form.text.trim()) return showToast("Bitte einen Notiztext eingeben.", "#c0392b");
     if (editId) {
-      setNotizen(prev => prev.map(n => n.id === editId ? { ...n, ...form } : n));
+      await onUpdate(editId, {
+        titel: form.titel,
+        text: form.text,
+        farbe: form.farbe,
+        typ: form.typ,
+        klient_id: form.klientId ? parseInt(form.klientId) : null,
+        klientId: form.klientId ? parseInt(form.klientId) : null,
+        pinned: form.pinned,
+        tags: form.tags,
+      });
       showToast("Notiz aktualisiert ✓");
     } else {
-      setNotizen(prev => [{ ...form, id: Date.now(), autor: user.name, datum: ds(new Date()) }, ...prev]);
+      await onAdd({
+        titel: form.titel,
+        text: form.text,
+        farbe: form.farbe,
+        typ: form.typ,
+        klientId: form.klientId ? parseInt(form.klientId) : null,
+        pinned: form.pinned,
+        tags: form.tags,
+      });
       showToast("Notiz gespeichert ✓");
     }
     setShowNew(false);
   };
 
-  const del = (id) => { setNotizen(prev => prev.filter(n => n.id !== id)); showToast("Notiz gelöscht", "#64748b"); };
-  const pin = (id) => setNotizen(prev => prev.map(n => n.id === id ? { ...n, pinned: !n.pinned } : n));
+  const del = async (id) => { await onDelete(id); };
+  const pin = async (id) => {
+    const found = notizen.find(n => n.id === id);
+    if (!found) return;
+    await onUpdate(id, { pinned: !found.pinned });
+  };
 
   const TagBadge = ({ tag, active, onClick, removable, onRemove }) => (
     <span onClick={onClick} style={{ display: "inline-flex", alignItems: "center", gap: 4, background: active ? tagColor(tag) : tagColor(tag) + "22", color: active ? "#fff" : tagColor(tag), border: `1px solid ${tagColor(tag)}44`, borderRadius: 20, padding: "3px 10px", fontSize: 12, fontWeight: 600, cursor: onClick ? "pointer" : "default", fontFamily: "'DM Sans',sans-serif", transition: "all .15s" }}>
@@ -1771,6 +2062,7 @@ const pageSubtitle = { color: "#64748b", fontSize: 15, margin: "0 0 28px" };
 const globalStyles = `
   * { box-sizing: border-box; }
   body { margin: 0; }
+  #root { width: 100%; max-width: none; min-height: 100vh; border: 0; text-align: left; }
   @keyframes fadeIn { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:none } }
   @keyframes slideUp { from { opacity:0; transform:translateY(16px) } to { opacity:1; transform:none } }
   @keyframes spin { to { transform: rotate(360deg) } }
@@ -1787,7 +2079,7 @@ const globalStyles = `
   .toast { position: fixed; bottom: 28px; right: 28px; color: #fff; padding: 12px 22px; border-radius: 10px; font-family: 'DM Sans',sans-serif; font-weight: 600; font-size: 14px; z-index: 9999; box-shadow: 0 4px 20px rgba(0,0,0,.18); animation: fadeIn .3s; }
 
   .notizen-layout { display: grid; grid-template-columns: 220px 1fr; gap: 24px; align-items: start; }
-  @media (max-width: 768px) { .notizen-layout { grid-template-columns: 1fr !important; } }
+  @media (max-width: 920px) {
     .sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 200; transform: translateX(-100%); width: 260px; padding-top: 20px; transition: transform .28s ease; }
     .sidebar-open { transform: translateX(0) !important; }
     .sidebar-overlay { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 199; }
@@ -1798,5 +2090,18 @@ const globalStyles = `
     .vorlagen-grid { grid-template-columns: 1fr !important; }
     .dsgvo-grid { grid-template-columns: 1fr !important; }
     .toast { bottom: 16px; right: 16px; left: 16px; text-align: center; }
+  }
+  @media (max-width: 768px) {
+    .notizen-layout { grid-template-columns: 1fr !important; }
+    .akte-grid { grid-template-columns: 1fr !important; }
+    .akte-grid > * { grid-column: auto !important; }
+    h1 { line-height: 1.12; }
+    input, select, textarea, button { max-width: 100%; }
+    .main-content { padding: 18px 12px 88px; }
+  }
+  @media (max-width: 560px) {
+    .mobile-header { padding: 12px 14px; }
+    .main-content { padding-inline: 10px; }
+    table { font-size: 13px; }
   }
 `;
