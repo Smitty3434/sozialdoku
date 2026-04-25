@@ -45,6 +45,16 @@ const FACHBEREICH_LABELS = {
   behoerden: "Behörden",
   freizeit: "Freizeit",
 };
+const SECTION_ICONS = {
+  klient: "user",
+  aufgaben: "check",
+  ziele: "target",
+  dateien: "file",
+  dokumentation: "doc",
+  gesundheit: "plus",
+  behoerden: "building",
+  freizeit: "spark",
+};
 const FACHBEREICH_FARBEN = {
   soziales: "#0f766e",
   gesundheit: "#64748b",
@@ -112,6 +122,7 @@ export default function App() {
   const [notizen, setNotizen] = useState([]);
   const [selectedClient, setSelectedClient] = useState(null);
   const [search, setSearch] = useState("");
+  const [clientStatusFilter, setClientStatusFilter] = useState("alle");
   const [newEintrag, setNewEintrag] = useState(null);
   const [showNewClient, setShowNewClient] = useState(false);
   const [toast, setToast] = useState(null);
@@ -436,11 +447,15 @@ export default function App() {
     return null;
   }} />;
 
-  const filteredClients = clients.filter(c =>
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    (c.aktenzeichen || "").includes(search) ||
-    c.einrichtung.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredClients = clients.filter(c => {
+    const q = search.toLowerCase();
+    const matchesSearch =
+      c.name.toLowerCase().includes(q) ||
+      (c.aktenzeichen || "").toLowerCase().includes(q) ||
+      (c.einrichtung || "").toLowerCase().includes(q);
+    const matchesStatus = clientStatusFilter === "alle" || c.status === clientStatusFilter || (clientStatusFilter === "abgeschlossen" && c.status === "behandelt");
+    return matchesSearch && matchesStatus;
+  });
 
   const canEdit = user?.rolle === "Admin" || user?.rolle === "Fachkraft";
   const isAdmin = user?.rolle === "Admin";
@@ -463,8 +478,8 @@ export default function App() {
           </div>
 
           <main className="main-content">
-            {view === "dashboard" && <Dashboard clients={clients} eintraege={eintraege} termine={termine} setView={setView} setSelectedClient={setSelectedClient} user={user} />}
-            {view === "clients" && <ClientsView clients={filteredClients} search={search} setSearch={setSearch} onSelect={(c) => { setSelectedClient(c); setView("detail"); }} onNew={canEdit ? () => setShowNewClient(true) : null} />}
+            {view === "dashboard" && <Dashboard clients={clients} fallakten={fallakten} eintraege={eintraege} termine={termine} setView={setView} setSelectedClient={setSelectedClient} user={user} />}
+            {view === "clients" && <ClientsView clients={filteredClients} allClients={clients} search={search} setSearch={setSearch} statusFilter={clientStatusFilter} setStatusFilter={setClientStatusFilter} onSelect={(c) => { setSelectedClient(c); setView("detail"); }} onNew={canEdit ? () => setShowNewClient(true) : null} />}
             {view === "detail" && selectedClient && (
               <DetailView
                 client={selectedClient}
@@ -602,7 +617,7 @@ function LoginScreen({ onLogin }) {
 function Sidebar({ view, setView, user, onLogout, isOpen, notifications, isAdmin }) {
   const items = [
     { id: "dashboard", icon: "⊞", label: "Dashboard" },
-    { id: "clients", icon: "👥", label: "Klienten" },
+    { id: "clients", icon: "🗂", label: "Fallakten" },
     { id: "kalender", icon: "📅", label: "Kalender" },
     { id: "benachrichtigungen", icon: "🔔", label: "Erinnerungen", badge: notifications },
     { id: "notizen", icon: "📝", label: "Notizen" },
@@ -644,22 +659,26 @@ function Sidebar({ view, setView, user, onLogout, isOpen, notifications, isAdmin
   );
 }
 
-function Dashboard({ clients, eintraege, termine, setView, setSelectedClient, user }) {
-  const total = clients.length;
-  const aktiv = clients.filter(c => c.status === "aktiv").length;
-  const allEntries = Object.values(eintraege).flat();
+function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelectedClient, user }) {
+  const myClients = clients.filter(c => (fallakten?.[c.id]?.intern || []).some(i => String(i.userId) === String(user?.id)));
+  const myClientIds = new Set(myClients.map(c => String(c.id)));
+  const total = myClients.length;
+  const offeneAufgaben = myClients.flatMap(c => (fallakten?.[c.id]?.aufgaben || []).map(a => ({ ...a, klientId: c.id, klientName: c.name }))).filter(a => a.status !== "erledigt");
+  const allEntries = Object.entries(eintraege)
+    .filter(([clientId]) => myClientIds.has(String(clientId)))
+    .flatMap(([clientId, items]) => (items || []).map(item => ({ ...item, klientId: clientId })));
   const stunden = allEntries.filter(e => e.typ === "Stunden").reduce((s, e) => s + (e.stunden || 0), 0);
   const recent = [...allEntries].sort((a, b) => new Date(b.datum) - new Date(a.datum)).slice(0, 4);
   const getClientName = (id) => clients.find(c => c.id == id)?.name || "–";
-  const getClientId = (entry) => Object.entries(eintraege).find(([, v]) => v.some(e => e.id === entry.id))?.[0];
+  const getClientId = (entry) => entry.klientId || Object.entries(eintraege).find(([, v]) => v.some(e => e.id === entry.id))?.[0];
   const today = ds(new Date());
-  const nextTermine = [...termine].sort((a, b) => new Date(a.datum) - new Date(b.datum)).filter(t => t.datum >= today).slice(0, 3);
+  const nextTermine = [...termine].sort((a, b) => new Date(a.datum) - new Date(b.datum)).filter(t => t.datum >= today && (!t.klientId || myClientIds.has(String(t.klientId)))).slice(0, 3);
   return (
     <div>
       <h1 style={pageTitle}>Dashboard</h1>
-      <p style={pageSubtitle}>Willkommen zurück, {user?.name.split(" ")[0]}!</p>
+      <p style={pageSubtitle}>Persönliche Arbeitsübersicht für {user?.name.split(" ")[0]}</p>
       <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 18, marginBottom: 28 }}>
-        {[{ label: "Klienten gesamt", value: total, icon: "👥", color: "#1a4480" }, { label: "Aktive Fälle", value: aktiv, icon: "📋", color: "#16825a" }, { label: "Geleistete Stunden", value: stunden.toFixed(1) + " h", icon: "⏱", color: "#b45309" }].map(s => (
+        {[{ label: "Meine Klienten", value: total, icon: "👥", color: "#1a4480" }, { label: "Offene Aufgaben", value: offeneAufgaben.length, icon: "☑", color: "#475569" }, { label: "Geleistete Stunden", value: stunden.toFixed(1) + " h", icon: "⏱", color: "#b45309" }].map(s => (
           <div key={s.label} style={{ background: "#fff", borderRadius: 14, padding: "20px 22px", boxShadow: "0 2px 12px rgba(0,0,0,.06)", display: "flex", alignItems: "center", gap: 14 }}>
             <div style={{ width: 46, height: 46, borderRadius: 12, background: s.color + "18", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>{s.icon}</div>
             <div><p style={{ margin: 0, fontSize: 24, fontWeight: 700, color: s.color, fontFamily: "'DM Serif Display',serif" }}>{s.value}</p><p style={{ margin: 0, fontSize: 12, color: "#64748b", marginTop: 2 }}>{s.label}</p></div>
@@ -668,7 +687,32 @@ function Dashboard({ clients, eintraege, termine, setView, setSelectedClient, us
       </div>
       <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         <div style={card}>
+          <h2 style={cardTitle}>Meine Klienten</h2>
+          {myClients.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine interne Zuständigkeit hinterlegt.</p>}
+          {myClients.map(c => (
+            <div key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "11px 0", borderBottom: "1px solid #f1f5f9" }}>
+              <div style={{ minWidth: 0 }}>
+                <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</p>
+                <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{c.aktenzeichen || "ohne Aktenzeichen"} · {c.status || "ohne Status"}</p>
+              </div>
+              <button onClick={() => { setSelectedClient(c); setView("detail"); }} style={{ ...btnSecondary, fontSize: 11, padding: "5px 10px", whiteSpace: "nowrap" }}>Öffnen</button>
+            </div>
+          ))}
+          <button onClick={() => setView("clients")} style={{ ...btnSecondary, width: "100%", justifyContent: "center", marginTop: 12, fontSize: 13 }}>Alle Fallakten →</button>
+        </div>
+        <div style={card}>
+          <h2 style={cardTitle}>Offene Aufgaben</h2>
+          {offeneAufgaben.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine offenen Aufgaben in deinen Akten.</p>}
+          {offeneAufgaben.slice(0, 5).map(a => (
+            <div key={a.id} style={{ padding: "10px 0", borderBottom: "1px solid #f1f5f9" }}>
+              <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#1e293b" }}>{a.titel}</p>
+              <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{a.klientName} · {a.status}{a.datum ? ` · ${formatDate(a.datum)}` : ""}</p>
+            </div>
+          ))}
+        </div>
+        <div style={card}>
           <h2 style={cardTitle}>🕐 Zuletzt dokumentiert</h2>
+          {recent.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Noch keine Dokumentationen in deinen Akten.</p>}
           {recent.map(e => {
             const cid = getClientId(e);
             return (
@@ -702,16 +746,29 @@ function Dashboard({ clients, eintraege, termine, setView, setSelectedClient, us
   );
 }
 
-function ClientsView({ clients, search, setSearch, onSelect, onNew }) {
+function ClientsView({ clients, allClients, search, setSearch, statusFilter, setStatusFilter, onSelect, onNew }) {
+  const tabs = [
+    { id: "alle", label: "Alle", count: allClients.length },
+    { id: "aktiv", label: "Aktiv", count: allClients.filter(c => c.status === "aktiv").length },
+    { id: "abgeschlossen", label: "Abgeschlossen", count: allClients.filter(c => c.status === "abgeschlossen" || c.status === "behandelt").length },
+    { id: "archiviert", label: "Archiviert", count: allClients.filter(c => c.status === "archiviert").length },
+  ];
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-        <div><h1 style={pageTitle}>Klienten</h1><p style={pageSubtitle}>{clients.length} Einträge</p></div>
+        <div><h1 style={pageTitle}>Fallakten</h1><p style={pageSubtitle}>Gesamtbestand mit {allClients.length} Akten</p></div>
         {onNew && <button onClick={onNew} style={btnPrimary}>+ Klient anlegen</button>}
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+        {tabs.map(tab => (
+          <button key={tab.id} onClick={() => setStatusFilter(tab.id)} style={{ border: statusFilter === tab.id ? "1px solid #475569" : "1px solid #e2e8f0", background: statusFilter === tab.id ? "#f1f5f9" : "#fff", color: statusFilter === tab.id ? "#1e293b" : "#64748b", borderRadius: 999, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            {tab.label} <span style={{ color: "#94a3b8", marginLeft: 4 }}>{tab.count}</span>
+          </button>
+        ))}
       </div>
       <div style={{ position: "relative", marginBottom: 20 }}>
         <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }}>🔍</span>
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, Aktenzeichen oder Einrichtung…" style={{ ...inputStyle, paddingLeft: 40 }} />
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Name oder Aktenzeichen suchen…" style={{ ...inputStyle, paddingLeft: 40 }} />
       </div>
       <div style={{ ...card, padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
@@ -747,15 +804,39 @@ function HeaderButton({ children, onClick, primary = false }) {
 function AkteSection({ sectionKey, title, color = "#0f2647", children, rightContent = null, open, onToggle }) {
   return (
     <div style={{ background: "#ffffff", borderRadius: 8, boxShadow: open ? "0 10px 26px rgba(15,23,42,.06)" : "none", overflow: "hidden", border: open ? "1px solid #94a3b8" : "1px solid #dbe3ea" }}>
-      <button onClick={() => onToggle(sectionKey)} style={{ width: "100%", background: open ? "#f8fafc" : "#fff", border: "none", borderLeft: open ? `3px solid ${color}` : "3px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "15px 18px", textAlign: "left" }}>
-        <span style={{ fontSize: 14, fontWeight: 700, color: "#111827", fontFamily: "'DM Sans',sans-serif", letterSpacing: 0 }}>{title}</span>
+      <button onClick={() => onToggle(sectionKey)} style={{ width: "100%", background: open ? "#f8fafc" : "#fff", border: "none", borderLeft: open ? `3px solid ${color}` : "3px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px", textAlign: "left" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          <SectionIcon name={SECTION_ICONS[sectionKey]} active={open} />
+          <span style={{ fontSize: 14, fontWeight: 700, color: "#111827", fontFamily: "'DM Sans',sans-serif", letterSpacing: 0 }}>{title}</span>
+        </span>
         <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {rightContent}
           <span style={{ color: "#64748b", fontSize: 12, fontWeight: 600 }}>{open ? "Schließen" : "Öffnen"}</span>
         </span>
       </button>
-      {open && <div style={{ padding: "18px", borderTop: "1px solid #eef2f6", background: "#fff" }}>{children}</div>}
+      {open && <div style={{ padding: "20px", borderTop: "1px solid #eef2f6", background: "#fff" }}>{children}</div>}
     </div>
+  );
+}
+
+function SectionIcon({ name, active }) {
+  if (!name) return null;
+  const stroke = active ? "#334155" : "#64748b";
+  const common = { fill: "none", stroke, strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" };
+  const paths = {
+    user: <><circle cx="12" cy="8" r="3" {...common} /><path d="M5 19c1.4-3.2 3.7-4.8 7-4.8s5.6 1.6 7 4.8" {...common} /></>,
+    check: <><path d="M4 7h10" {...common} /><path d="M4 12h8" {...common} /><path d="m15 14 2 2 4-5" {...common} /></>,
+    target: <><circle cx="12" cy="12" r="7" {...common} /><circle cx="12" cy="12" r="3" {...common} /></>,
+    file: <><path d="M7 3h7l4 4v14H7z" {...common} /><path d="M14 3v5h5" {...common} /></>,
+    doc: <><path d="M6 5h12v14H6z" {...common} /><path d="M9 9h6M9 13h6M9 17h4" {...common} /></>,
+    plus: <><path d="M12 5v14M5 12h14" {...common} /></>,
+    building: <><path d="M5 20V6l7-3 7 3v14" {...common} /><path d="M9 9h.01M12 9h.01M15 9h.01M9 13h.01M12 13h.01M15 13h.01" {...common} /></>,
+    spark: <><path d="M12 4v5M12 15v5M4 12h5M15 12h5" {...common} /><path d="m8 8 8 8M16 8l-8 8" {...common} /></>,
+  };
+  return (
+    <span style={sectionIconWrapStyle}>
+      <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">{paths[name]}</svg>
+    </span>
   );
 }
 
@@ -771,11 +852,36 @@ function DeleteButton({ onClick, label = "Entfernen" }) {
   return <button onClick={onClick} style={{ background: "transparent", border: "1px solid transparent", cursor: "pointer", color: "#64748b", fontSize: 12, fontWeight: 600, padding: "5px 8px", borderRadius: 6 }}>{label}</button>;
 }
 
-function CompactRecord({ title, meta, text, onDelete }) {
+function StatusChip({ value, type = "neutral" }) {
+  if (!value) return null;
+  const normalized = String(value).replace(/_/g, " ");
+  const tone = {
+    done: { bg: "#ecfdf5", border: "#bbf7d0", color: "#166534" },
+    active: { bg: "#f1f5f9", border: "#cbd5e1", color: "#334155" },
+    waiting: { bg: "#f8fafc", border: "#e2e8f0", color: "#64748b" },
+    paused: { bg: "#fefce8", border: "#fde68a", color: "#854d0e" },
+    neutral: { bg: "#f8fafc", border: "#e2e8f0", color: "#475569" },
+  }[statusTone(value, type)] || { bg: "#f8fafc", border: "#e2e8f0", color: "#475569" };
+  return <span style={{ ...statusChipStyle, background: tone.bg, borderColor: tone.border, color: tone.color }}>{normalized}</span>;
+}
+
+function statusTone(value, type) {
+  const v = String(value || "").toLowerCase();
+  if (v === "erledigt" || v === "abgeschlossen") return "done";
+  if (v === "in_bearbeitung" || v === "laufend" || v === "aktiv") return "active";
+  if (v === "pausiert") return "paused";
+  if (v === "offen" || v === "inaktiv") return "waiting";
+  return type === "status" ? "active" : "neutral";
+}
+
+function CompactRecord({ title, meta, text, onDelete, status, statusType }) {
   return (
     <div style={compactRecordStyle}>
       <div style={{ minWidth: 0 }}>
-        <p style={recordTitleStyle}>{title}</p>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <p style={recordTitleStyle}>{title}</p>
+          <StatusChip value={status} type={statusType} />
+        </div>
         {meta && <p style={recordMetaStyle}>{meta}</p>}
         {text && <p style={recordTextStyle}>{text}</p>}
       </div>
@@ -787,12 +893,24 @@ function CompactRecord({ title, meta, text, onDelete }) {
 function ChronoRecord({ item }) {
   return (
     <div style={chronoRecordStyle}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
-        <div style={{ minWidth: 0 }}>
-          <p style={recordTitleStyle}>{item.titel}</p>
-          <p style={recordMetaStyle}>{formatDate(item.datum)} · {item.quelle}{item.autor ? ` · ${item.autor}` : ""}</p>
+      <div className="chrono-grid" style={chronoHeaderGridStyle}>
+        <div>
+          <span style={chronoLabelStyle}>Datum</span>
+          <p style={chronoMetaValueStyle}>{formatDate(item.datum)}</p>
         </div>
-        <span style={sourceBadgeStyle}>{item.quelle}</span>
+        <div>
+          <span style={chronoLabelStyle}>Bereich</span>
+          <p style={chronoMetaValueStyle}>{item.quelle}</p>
+        </div>
+        <div>
+          <span style={chronoLabelStyle}>Kontaktart</span>
+          <StatusChip value={item.kontaktart || item.quelle} />
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <span style={chronoLabelStyle}>Titel</span>
+          <p style={recordTitleStyle}>{item.titel}</p>
+          {item.autor && <p style={recordMetaStyle}>{item.autor}</p>}
+        </div>
       </div>
       <p style={{ ...recordTextStyle, marginTop: 10 }}>{item.text}</p>
     </div>
@@ -1029,9 +1147,10 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
       text: item.text,
       autor: item.autor,
       quelle: fachbereichLabel(bereich),
+      kontaktart: "Fachbereich",
       farbe: fachbereichFarbe(bereich),
     }))),
-    ...eintraege.map(e => ({ id: `eintrag-${e.id}`, datum: e.datum, titel: e.titel, text: e.text, autor: e.fachkraft, quelle: e.typ, farbe: typeColor(e.typ) })),
+    ...eintraege.map(e => ({ id: `eintrag-${e.id}`, datum: e.datum, titel: e.titel, text: e.text, autor: e.fachkraft, quelle: "Dokumentation", kontaktart: e.typ, farbe: typeColor(e.typ) })),
   ].sort((a, b) => new Date(b.datum) - new Date(a.datum));
 
   return (
@@ -1073,7 +1192,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
             <button onClick={() => { if (!quickFields.aufgabe.trim()) return; addSimpleItem("aufgaben", { titel: quickFields.aufgabe, status: "offen", notiz: "", datum: quickFields.aufgabeDatum || ds(new Date()) }); setQuickFields(p => ({ ...p, aufgabe: "", aufgabeDatum: ds(new Date()) })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Hinzufügen</button>
           </div>
           {(akte.aufgaben || []).length === 0 && <EmptyState>Noch keine Aufgaben erfasst.</EmptyState>}
-          {(akte.aufgaben || []).map(item => <CompactRecord key={item.id} title={item.titel} meta={`${item.status}${item.datum ? ` · ${formatDate(item.datum)}` : ""}`} text={item.notiz} onDelete={() => removeItem("aufgaben", item.id)} />)}
+          {(akte.aufgaben || []).map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={() => removeItem("aufgaben", item.id)} />)}
         </AkteSection>
 
         <AkteSection sectionKey="extern" title="Zuständigkeit extern" open={openMap["extern"]} onToggle={toggleSection}>
@@ -1086,7 +1205,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
             <button onClick={() => { if (!quickFields.externName.trim()) return; addSimpleItem("extern", { name: quickFields.externName, stelle: quickFields.externStelle, telefon: quickFields.externTelefon, email: quickFields.externEmail }); setQuickFields(p => ({ ...p, externName: "", externStelle: "", externTelefon: "", externEmail: "" })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Kontakt</button>
           </div>
-          {(akte.extern || []).map(item => <CompactRecord key={item.id} title={item.name} meta={`${item.stelle || "Externe Stelle"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} onDelete={() => removeItem("extern", item.id)} />)}
+          {(akte.extern || []).map(item => <CompactRecord key={item.id} title={item.name} status={item.status || "aktiv"} statusType="status" meta={`${item.stelle || "Externe Stelle"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} onDelete={() => removeItem("extern", item.id)} />)}
           {(akte.extern || []).length === 0 && <EmptyState>Keine externen Zuständigkeiten hinterlegt.</EmptyState>}
         </AkteSection>
 
@@ -1098,7 +1217,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
             </select>
             <button onClick={() => { const picked = interneAuswahl.find(u => String(u.id) === String(selectedInternUserId)); if (!picked) return showToast("Bitte eine Fachkraft auswählen.", "#c0392b"); addSimpleItem("intern", { userId: picked.id, name: picked.name, rolle: picked.rolle, telefon: "", email: picked.email }); setSelectedInternUserId(""); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Fachkraft</button>
           </div>
-          {(akte.intern || []).map(item => <CompactRecord key={item.id} title={item.name} meta={`${item.rolle || "Fachkraft"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} onDelete={() => removeItem("intern", item.id)} />)}
+          {(akte.intern || []).map(item => <CompactRecord key={item.id} title={item.name} status={item.status || "aktiv"} statusType="status" meta={`${item.rolle || "Fachkraft"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} onDelete={() => removeItem("intern", item.id)} />)}
           {(akte.intern || []).length === 0 && <EmptyState>Keine internen Zuständigkeiten hinterlegt.</EmptyState>}
         </AkteSection>
 
@@ -1108,7 +1227,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
             <input type="date" value={quickFields.zielDatum} onChange={e => setQuickFields(p => ({ ...p, zielDatum: e.target.value }))} style={inputStyle} />
             <button onClick={() => { if (!quickFields.ziel.trim()) return; addSimpleItem("ziele", { titel: quickFields.ziel, status: "laufend", notiz: "", datum: quickFields.zielDatum || ds(new Date()) }); setQuickFields(p => ({ ...p, ziel: "", zielDatum: ds(new Date()) })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Ziel</button>
           </div>
-          {(akte.ziele || []).map(item => <CompactRecord key={item.id} title={item.titel} meta={`${item.status}${item.datum ? ` · ${formatDate(item.datum)}` : ""}`} text={item.notiz} onDelete={() => removeItem("ziele", item.id)} />)}
+          {(akte.ziele || []).map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={() => removeItem("ziele", item.id)} />)}
           {(akte.ziele || []).length === 0 && <EmptyState>Noch keine Ziele erfasst.</EmptyState>}
         </AkteSection>
 
@@ -2160,13 +2279,17 @@ const card = { background: "#fff", borderRadius: 12, padding: "24px 28px", boxSh
 const cardTitle = { fontFamily: "'DM Sans',sans-serif", fontSize: 17, fontWeight: 700, margin: "0 0 16px", color: "#1f2937" };
 const pageTitle = { fontFamily: "'DM Sans',sans-serif", fontSize: 32, fontWeight: 700, color: "#1f2937", margin: "0 0 6px" };
 const pageSubtitle = { color: "#64748b", fontSize: 15, margin: "0 0 28px" };
-const compactRecordStyle = { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, border: "1px solid #e5e7eb", borderRadius: 8, padding: "12px 14px", background: "#fff", marginTop: 10 };
-const chronoRecordStyle = { border: "1px solid #e2e8f0", borderLeft: "3px solid #475569", borderRadius: 8, padding: "14px 16px", background: "#fff", boxShadow: "0 1px 2px rgba(15,23,42,.04)" };
-const noteRecordStyle = { border: "1px solid #e5e7eb", borderRadius: 8, padding: "12px 14px", background: "#fff" };
+const sectionIconWrapStyle = { width: 28, height: 28, borderRadius: 8, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "#f8fafc", border: "1px solid #e2e8f0", flexShrink: 0 };
+const compactRecordStyle = { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, border: "1px solid #e5e7eb", borderRadius: 8, padding: "14px 15px", background: "#fff", marginTop: 10 };
+const chronoRecordStyle = { border: "1px solid #e2e8f0", borderLeft: "3px solid #475569", borderRadius: 8, padding: "15px 16px", background: "#fff", boxShadow: "0 1px 2px rgba(15,23,42,.04)" };
+const noteRecordStyle = { border: "1px solid #e5e7eb", borderRadius: 8, padding: "13px 15px", background: "#fff" };
 const recordTitleStyle = { margin: 0, fontWeight: 700, fontSize: 14, color: "#111827", lineHeight: 1.35 };
 const recordMetaStyle = { margin: "4px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 };
-const recordTextStyle = { margin: "6px 0 0", fontSize: 13, color: "#374151", lineHeight: 1.65 };
-const sourceBadgeStyle = { fontSize: 11, color: "#475569", background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 999, padding: "3px 9px", fontWeight: 700, whiteSpace: "nowrap" };
+const recordTextStyle = { margin: "7px 0 0", fontSize: 13, color: "#374151", lineHeight: 1.7 };
+const statusChipStyle = { display: "inline-flex", alignItems: "center", minHeight: 22, border: "1px solid", borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, lineHeight: 1.2, whiteSpace: "nowrap" };
+const chronoHeaderGridStyle = { display: "grid", gridTemplateColumns: "88px minmax(110px,.8fr) minmax(110px,.8fr) minmax(160px,1.6fr)", gap: 14, alignItems: "start" };
+const chronoLabelStyle = { display: "block", marginBottom: 3, fontSize: 10, color: "#94a3b8", textTransform: "uppercase", fontWeight: 800, letterSpacing: ".04em" };
+const chronoMetaValueStyle = { margin: 0, fontSize: 12, color: "#334155", lineHeight: 1.4, fontWeight: 700 };
 
 const globalStyles = `
   * { box-sizing: border-box; }
@@ -2204,6 +2327,7 @@ const globalStyles = `
     .notizen-layout { grid-template-columns: 1fr !important; }
     .akte-grid { grid-template-columns: 1fr !important; }
     .akte-grid > * { grid-column: auto !important; }
+    .chrono-grid { grid-template-columns: 1fr 1fr !important; }
     h1 { line-height: 1.12; }
     input, select, textarea, button { max-width: 100%; }
     .main-content { padding: 18px 12px 88px; }
@@ -2211,6 +2335,7 @@ const globalStyles = `
   @media (max-width: 560px) {
     .mobile-header { padding: 12px 14px; }
     .main-content { padding-inline: 10px; }
+    .chrono-grid { grid-template-columns: 1fr !important; gap: 10px !important; }
     table { font-size: 13px; }
   }
 `;
