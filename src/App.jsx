@@ -85,8 +85,8 @@ const createEmptyFallakte = (client = {}) => ({
 // ── Helpers ───────────────────────────────────────────────────────
 const ds = (d) => d.toISOString().split("T")[0];
 const formatDate = (d) => d ? new Date(d).toLocaleDateString("de-DE") : "–";
-const typeColor = (t) => ({ Fallverlauf: "#1e3a8a", "Maßnahme": "#0f766e", Massnahme: "#0f766e", Stunden: "#854d0e" }[t] || "#475569");
-const typBg = (t) => ({ Fallverlauf: "#eff6ff", "Maßnahme": "#f0fdfa", Massnahme: "#f0fdfa", Stunden: "#fefce8" }[t] || "#f8fafc");
+const typeColor = () => "#475569";
+const typBg = () => "#f1f5f9";
 const rolleStyle = (r) => ROLLEN_FARBEN[r] || { bg: "#f1f5f9", color: "#475569" };
 
 // ── PDF Export ─────────────────────────────────────────────────────
@@ -746,15 +746,68 @@ function HeaderButton({ children, onClick, primary = false }) {
 
 function AkteSection({ sectionKey, title, color = "#0f2647", children, rightContent = null, open, onToggle }) {
   return (
-    <div style={{ background: open ? "#ffffff" : "#f8fafc", borderRadius: 10, boxShadow: open ? "0 1px 4px rgba(15,23,42,.05)" : "none", overflow: "hidden", border: open ? "1px solid #94a3b8" : "1px solid #e2e8f0" }}>
-      <button onClick={() => onToggle(sectionKey)} style={{ width: "100%", background: open ? "#f8fafc" : "#fff", border: "none", borderLeft: open ? `3px solid ${color}` : "3px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", textAlign: "left" }}>
-        <span style={{ fontSize: 14, fontWeight: 700, color: "#1f2937", fontFamily: "'DM Sans',sans-serif" }}>{title}</span>
+    <div style={{ background: "#ffffff", borderRadius: 8, boxShadow: open ? "0 10px 26px rgba(15,23,42,.06)" : "none", overflow: "hidden", border: open ? "1px solid #94a3b8" : "1px solid #dbe3ea" }}>
+      <button onClick={() => onToggle(sectionKey)} style={{ width: "100%", background: open ? "#f8fafc" : "#fff", border: "none", borderLeft: open ? `3px solid ${color}` : "3px solid transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "15px 18px", textAlign: "left" }}>
+        <span style={{ fontSize: 14, fontWeight: 700, color: "#111827", fontFamily: "'DM Sans',sans-serif", letterSpacing: 0 }}>{title}</span>
         <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
           {rightContent}
-          <span style={{ color: "#64748b", fontSize: 13 }}>{open ? "Weniger" : "Mehr"}</span>
+          <span style={{ color: "#64748b", fontSize: 12, fontWeight: 600 }}>{open ? "Schließen" : "Öffnen"}</span>
         </span>
       </button>
-      {open && <div style={{ padding: "16px" }}>{children}</div>}
+      {open && <div style={{ padding: "18px", borderTop: "1px solid #eef2f6", background: "#fff" }}>{children}</div>}
+    </div>
+  );
+}
+
+function EmptyState({ children }) {
+  return <p style={{ color: "#94a3b8", fontSize: 13, margin: 0 }}>{children}</p>;
+}
+
+function CountBadge({ children }) {
+  return <span style={{ minWidth: 24, textAlign: "center", fontSize: 12, color: "#475569", background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 999, padding: "2px 8px", fontWeight: 700 }}>{children}</span>;
+}
+
+function DeleteButton({ onClick, label = "Entfernen" }) {
+  return <button onClick={onClick} style={{ background: "transparent", border: "1px solid transparent", cursor: "pointer", color: "#64748b", fontSize: 12, fontWeight: 600, padding: "5px 8px", borderRadius: 6 }}>{label}</button>;
+}
+
+function CompactRecord({ title, meta, text, onDelete }) {
+  return (
+    <div style={compactRecordStyle}>
+      <div style={{ minWidth: 0 }}>
+        <p style={recordTitleStyle}>{title}</p>
+        {meta && <p style={recordMetaStyle}>{meta}</p>}
+        {text && <p style={recordTextStyle}>{text}</p>}
+      </div>
+      {onDelete && <DeleteButton onClick={onDelete} />}
+    </div>
+  );
+}
+
+function ChronoRecord({ item }) {
+  return (
+    <div style={chronoRecordStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div style={{ minWidth: 0 }}>
+          <p style={recordTitleStyle}>{item.titel}</p>
+          <p style={recordMetaStyle}>{formatDate(item.datum)} · {item.quelle}{item.autor ? ` · ${item.autor}` : ""}</p>
+        </div>
+        <span style={sourceBadgeStyle}>{item.quelle}</span>
+      </div>
+      <p style={{ ...recordTextStyle, marginTop: 10 }}>{item.text}</p>
+    </div>
+  );
+}
+
+function NoteRecord({ note }) {
+  const noteDate = note.datum || note.created_at;
+  return (
+    <div style={noteRecordStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <strong style={{ fontSize: 13, color: "#111827" }}>{note.titel}</strong>
+        <span style={recordMetaStyle}>{note.autor}{noteDate ? ` · ${formatDate(noteDate)}` : ""}</span>
+      </div>
+      {note.text && <p style={{ ...recordTextStyle, marginTop: 8 }}>{note.text}</p>}
     </div>
   );
 }
@@ -1013,14 +1066,14 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
           </div>
         </AkteSection>
 
-        <AkteSection sectionKey="aufgaben" title="Aufgaben" rightContent={<span style={{ fontSize: 12, color: "#64748b" }}>{akte.aufgaben?.length || 0}</span>} open={openMap["aufgaben"]} onToggle={toggleSection}>
+        <AkteSection sectionKey="aufgaben" title="Aufgaben" rightContent={<CountBadge>{akte.aufgaben?.length || 0}</CountBadge>} open={openMap["aufgaben"]} onToggle={toggleSection}>
           <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 8, marginBottom: 10 }}>
             <input value={quickFields.aufgabe} onChange={e => setQuickFields(p => ({ ...p, aufgabe: e.target.value }))} style={inputStyle} placeholder="Neue Aufgabe / Notiz" />
             <input type="date" value={quickFields.aufgabeDatum} onChange={e => setQuickFields(p => ({ ...p, aufgabeDatum: e.target.value }))} style={inputStyle} />
             <button onClick={() => { if (!quickFields.aufgabe.trim()) return; addSimpleItem("aufgaben", { titel: quickFields.aufgabe, status: "offen", notiz: "", datum: quickFields.aufgabeDatum || ds(new Date()) }); setQuickFields(p => ({ ...p, aufgabe: "", aufgabeDatum: ds(new Date()) })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Hinzufügen</button>
           </div>
-          {(akte.aufgaben || []).length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Noch keine Aufgaben erfasst.</p>}
-          {(akte.aufgaben || []).map(item => <div key={item.id} style={{ display: "flex", justifyContent: "space-between", gap: 10, borderTop: "1px solid #f1f5f9", padding: "10px 0" }}><div><p style={{ margin: 0, fontWeight: 700, fontSize: 13 }}>{item.titel}</p><p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{item.status}{item.datum ? ` · ${formatDate(item.datum)}` : ""}{item.notiz ? ` · ${item.notiz}` : ""}</p></div><button onClick={() => removeItem("aufgaben", item.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>🗑</button></div>)}
+          {(akte.aufgaben || []).length === 0 && <EmptyState>Noch keine Aufgaben erfasst.</EmptyState>}
+          {(akte.aufgaben || []).map(item => <CompactRecord key={item.id} title={item.titel} meta={`${item.status}${item.datum ? ` · ${formatDate(item.datum)}` : ""}`} text={item.notiz} onDelete={() => removeItem("aufgaben", item.id)} />)}
         </AkteSection>
 
         <AkteSection sectionKey="extern" title="Zuständigkeit extern" open={openMap["extern"]} onToggle={toggleSection}>
@@ -1033,8 +1086,8 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
             <button onClick={() => { if (!quickFields.externName.trim()) return; addSimpleItem("extern", { name: quickFields.externName, stelle: quickFields.externStelle, telefon: quickFields.externTelefon, email: quickFields.externEmail }); setQuickFields(p => ({ ...p, externName: "", externStelle: "", externTelefon: "", externEmail: "" })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Kontakt</button>
           </div>
-          {(akte.extern || []).map(item => <div key={item.id} style={{ borderTop: "1px solid #f1f5f9", padding: "10px 0", display: "flex", justifyContent: "space-between", gap: 10 }}><div><p style={{ margin: 0, fontWeight: 700, fontSize: 13 }}>{item.name}</p><p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{item.stelle || "Externe Stelle"}{item.telefon ? ` · ${item.telefon}` : ""}{item.email ? ` · ${item.email}` : ""}</p></div><button onClick={() => removeItem("extern", item.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>🗑</button></div>)}
-          {(akte.extern || []).length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Keine externen Zuständigkeiten hinterlegt.</p>}
+          {(akte.extern || []).map(item => <CompactRecord key={item.id} title={item.name} meta={`${item.stelle || "Externe Stelle"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} onDelete={() => removeItem("extern", item.id)} />)}
+          {(akte.extern || []).length === 0 && <EmptyState>Keine externen Zuständigkeiten hinterlegt.</EmptyState>}
         </AkteSection>
 
         <AkteSection sectionKey="intern" title="Zuständigkeit intern" open={openMap["intern"]} onToggle={toggleSection}>
@@ -1045,8 +1098,8 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
             </select>
             <button onClick={() => { const picked = interneAuswahl.find(u => String(u.id) === String(selectedInternUserId)); if (!picked) return showToast("Bitte eine Fachkraft auswählen.", "#c0392b"); addSimpleItem("intern", { userId: picked.id, name: picked.name, rolle: picked.rolle, telefon: "", email: picked.email }); setSelectedInternUserId(""); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Fachkraft</button>
           </div>
-          {(akte.intern || []).map(item => <div key={item.id} style={{ borderTop: "1px solid #f1f5f9", padding: "10px 0", display: "flex", justifyContent: "space-between", gap: 10 }}><div><p style={{ margin: 0, fontWeight: 700, fontSize: 13 }}>{item.name}</p><p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{item.rolle || "Fachkraft"}{item.telefon ? ` · ${item.telefon}` : ""}{item.email ? ` · ${item.email}` : ""}</p></div><button onClick={() => removeItem("intern", item.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>🗑</button></div>)}
-          {(akte.intern || []).length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Keine internen Zuständigkeiten hinterlegt.</p>}
+          {(akte.intern || []).map(item => <CompactRecord key={item.id} title={item.name} meta={`${item.rolle || "Fachkraft"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} onDelete={() => removeItem("intern", item.id)} />)}
+          {(akte.intern || []).length === 0 && <EmptyState>Keine internen Zuständigkeiten hinterlegt.</EmptyState>}
         </AkteSection>
 
         <AkteSection sectionKey="ziele" title="Ziele" open={openMap["ziele"]} onToggle={toggleSection}>
@@ -1055,8 +1108,8 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
             <input type="date" value={quickFields.zielDatum} onChange={e => setQuickFields(p => ({ ...p, zielDatum: e.target.value }))} style={inputStyle} />
             <button onClick={() => { if (!quickFields.ziel.trim()) return; addSimpleItem("ziele", { titel: quickFields.ziel, status: "laufend", notiz: "", datum: quickFields.zielDatum || ds(new Date()) }); setQuickFields(p => ({ ...p, ziel: "", zielDatum: ds(new Date()) })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Ziel</button>
           </div>
-          {(akte.ziele || []).map(item => <div key={item.id} style={{ borderTop: "1px solid #f1f5f9", padding: "10px 0", display: "flex", justifyContent: "space-between", gap: 10 }}><div><p style={{ margin: 0, fontWeight: 700, fontSize: 13 }}>{item.titel}</p><p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{item.status}{item.datum ? ` · ${formatDate(item.datum)}` : ""}{item.notiz ? ` · ${item.notiz}` : ""}</p></div><button onClick={() => removeItem("ziele", item.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>🗑</button></div>)}
-          {(akte.ziele || []).length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Noch keine Ziele erfasst.</p>}
+          {(akte.ziele || []).map(item => <CompactRecord key={item.id} title={item.titel} meta={`${item.status}${item.datum ? ` · ${formatDate(item.datum)}` : ""}`} text={item.notiz} onDelete={() => removeItem("ziele", item.id)} />)}
+          {(akte.ziele || []).length === 0 && <EmptyState>Noch keine Ziele erfasst.</EmptyState>}
         </AkteSection>
 
         <AkteSection sectionKey="dateien" title="Dateien" open={openMap["dateien"]} onToggle={toggleSection}>
@@ -1073,8 +1126,8 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
         </AkteSection>
 
         {Object.entries(FACHBEREICH_LABELS).map(([key, label]) => (
-          <AkteSection key={key} sectionKey={key} title={label} color={fachbereichFarbe(key)} rightContent={<span style={{ fontSize: 12, color: fachbereichFarbe(key) }}>{(akte.fachbereiche?.[key] || []).length}</span>} open={openMap[key]} onToggle={toggleSection}>
-            <div style={{ background: "#f8fafc", borderRadius: 10, padding: 12, marginBottom: 10 }}>
+          <AkteSection key={key} sectionKey={key} title={label} color="#475569" rightContent={<CountBadge>{(akte.fachbereiche?.[key] || []).length}</CountBadge>} open={openMap[key]} onToggle={toggleSection}>
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 14, marginBottom: 12 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
                 <input value={newDocs[key].titel} onChange={e => setNewDocs(prev => ({ ...prev, [key]: { ...prev[key], titel: e.target.value } }))} style={inputStyle} placeholder={`Titel für ${label}`} />
                 <input type="date" value={newDocs[key].datum} onChange={e => setNewDocs(prev => ({ ...prev, [key]: { ...prev[key], datum: e.target.value } }))} style={inputStyle} />
@@ -1084,23 +1137,23 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
                 <button onClick={() => addFachDoc(key)} style={{ ...btnPrimary, fontSize: 12 }}>+ Eintrag speichern</button>
               </div>
             </div>
-            {(akte.fachbereiche?.[key] || []).length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Noch keine Einträge in diesem Bereich.</p>}
-            {(akte.fachbereiche?.[key] || []).map(item => <div key={item.id} style={{ borderTop: "1px solid #f1f5f9", padding: "12px 0", display: "flex", justifyContent: "space-between", gap: 10 }}><div><p style={{ margin: 0, fontWeight: 700, fontSize: 13 }}>{item.titel}</p><p style={{ margin: "4px 0 0", fontSize: 12, color: "#475569", lineHeight: 1.55 }}>{item.text}</p><p style={{ margin: "5px 0 0", fontSize: 11, color: "#94a3b8" }}>{formatDate(item.datum)} · {item.autor}</p></div><button onClick={() => removeDoc(key, item.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>🗑</button></div>)}
+            {(akte.fachbereiche?.[key] || []).length === 0 && <EmptyState>Noch keine Einträge in diesem Bereich.</EmptyState>}
+            {(akte.fachbereiche?.[key] || []).map(item => <CompactRecord key={item.id} title={item.titel} meta={`${formatDate(item.datum)}${item.autor ? ` · ${item.autor}` : ""}`} text={item.text} onDelete={() => removeDoc(key, item.id)} />)}
           </AkteSection>
         ))}
 
         <div style={{ gridColumn: "1 / -1" }}>
-          <AkteSection sectionKey="dokumentation" title="Dokumentation" rightContent={<span style={{ fontSize: 12, color: "#64748b" }}>{chronoDokumentation.length}</span>} open={openMap["dokumentation"]} onToggle={toggleSection}>
-            {chronoDokumentation.length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Noch keine Dokumentation vorhanden.</p>}
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {chronoDokumentation.map(item => <div key={item.id} style={{ borderLeft: `4px solid ${item.farbe}`, background: "#f8fafc", borderRadius: 12, padding: "12px 14px" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}><div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}><span style={{ background: item.farbe + '22', color: item.farbe, padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700 }}>{item.quelle}</span><strong style={{ fontSize: 13, color: "#0f172a" }}>{item.titel}</strong></div><span style={{ fontSize: 11, color: "#94a3b8" }}>{formatDate(item.datum)} · {item.autor}</span></div><p style={{ margin: "6px 0 0", fontSize: 13, color: "#475569", lineHeight: 1.6 }}>{item.text}</p></div>)}
+          <AkteSection sectionKey="dokumentation" title="Dokumentation" color="#475569" rightContent={<CountBadge>{chronoDokumentation.length}</CountBadge>} open={openMap["dokumentation"]} onToggle={toggleSection}>
+            {chronoDokumentation.length === 0 && <EmptyState>Noch keine Dokumentation vorhanden.</EmptyState>}
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {chronoDokumentation.map(item => <ChronoRecord key={item.id} item={item} />)}
             </div>
           </AkteSection>
         </div>
 
         <div style={{ gridColumn: "1 / -1" }}>
-          <AkteSection sectionKey="notizen" title="Notizen zum Klienten" rightContent={<span style={{ fontSize: 12, color: "#64748b" }}>{clientNotizen.length}</span>} open={openMap["notizen"]} onToggle={toggleSection}>
-            {clientNotizen.length === 0 ? <p style={{ color: "#94a3b8", fontSize: 13 }}>Keine verknüpften Notizen vorhanden.</p> : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{clientNotizen.map(n => { const fc = NOTIZ_FARBEN[n.farbe] || NOTIZ_FARBEN.gelb; return <div key={n.id} style={{ background: fc.bg, borderRadius: 10, padding: "12px 14px", borderLeft: `4px solid ${fc.border}` }}><div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}><strong style={{ fontSize: 13 }}>{n.titel}</strong><span style={{ fontSize: 11, color: "#64748b" }}>{n.autor} · {formatDate(n.datum)}</span></div>{n.text && <p style={{ margin: "6px 0 0", fontSize: 12, color: "#475569", lineHeight: 1.5 }}>{n.text}</p>}</div>; })}</div>}
+          <AkteSection sectionKey="notizen" title="Notizen zum Klienten" color="#475569" rightContent={<CountBadge>{clientNotizen.length}</CountBadge>} open={openMap["notizen"]} onToggle={toggleSection}>
+            {clientNotizen.length === 0 ? <EmptyState>Keine verknüpften Notizen vorhanden.</EmptyState> : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{clientNotizen.map(n => <NoteRecord key={n.id} note={n} />)}</div>}
           </AkteSection>
         </div>
       </div>
@@ -2107,6 +2160,13 @@ const card = { background: "#fff", borderRadius: 12, padding: "24px 28px", boxSh
 const cardTitle = { fontFamily: "'DM Sans',sans-serif", fontSize: 17, fontWeight: 700, margin: "0 0 16px", color: "#1f2937" };
 const pageTitle = { fontFamily: "'DM Sans',sans-serif", fontSize: 32, fontWeight: 700, color: "#1f2937", margin: "0 0 6px" };
 const pageSubtitle = { color: "#64748b", fontSize: 15, margin: "0 0 28px" };
+const compactRecordStyle = { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, border: "1px solid #e5e7eb", borderRadius: 8, padding: "12px 14px", background: "#fff", marginTop: 10 };
+const chronoRecordStyle = { border: "1px solid #e2e8f0", borderLeft: "3px solid #475569", borderRadius: 8, padding: "14px 16px", background: "#fff", boxShadow: "0 1px 2px rgba(15,23,42,.04)" };
+const noteRecordStyle = { border: "1px solid #e5e7eb", borderRadius: 8, padding: "12px 14px", background: "#fff" };
+const recordTitleStyle = { margin: 0, fontWeight: 700, fontSize: 14, color: "#111827", lineHeight: 1.35 };
+const recordMetaStyle = { margin: "4px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 };
+const recordTextStyle = { margin: "6px 0 0", fontSize: 13, color: "#374151", lineHeight: 1.65 };
+const sourceBadgeStyle = { fontSize: 11, color: "#475569", background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 999, padding: "3px 9px", fontWeight: 700, whiteSpace: "nowrap" };
 
 const globalStyles = `
   * { box-sizing: border-box; }
