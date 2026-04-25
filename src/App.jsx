@@ -98,6 +98,15 @@ const formatDate = (d) => d ? new Date(d).toLocaleDateString("de-DE") : "–";
 const typeColor = () => "#475569";
 const typBg = () => "#f1f5f9";
 const rolleStyle = (r) => ROLLEN_FARBEN[r] || { bg: "#f1f5f9", color: "#475569" };
+const mapTermin = (t) => ({ ...t, klientId: t.klient_id, erinnerung: Boolean(t.erinnerung) });
+const localDate = (date) => {
+  const [year, month, day] = String(date || "").split("-").map(Number);
+  return new Date(year || 1970, (month || 1) - 1, day || 1);
+};
+const dayDiff = (date, from = new Date()) => {
+  const start = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  return Math.ceil((localDate(date) - start) / 86400000);
+};
 
 // ── PDF Export ─────────────────────────────────────────────────────
 const exportPDF = (client, eintraege) => {
@@ -289,8 +298,12 @@ export default function App() {
   };
 
   const loadTermine = async () => {
-    const { data } = await supabase.from("termine").select("*").order("datum");
-    if (data) setTermine(data.map(t => ({ ...t, klientId: t.klient_id })));
+    const { data, error } = await supabase.from("termine").select("*").order("datum", { ascending: true }).order("uhrzeit", { ascending: true });
+    if (error) {
+      showToast("Termine konnten nicht geladen werden.", "#c0392b");
+      return;
+    }
+    setTermine((data || []).map(mapTermin));
   };
 
   const loadNotizen = async () => {
@@ -368,22 +381,25 @@ export default function App() {
       titel: termin.titel,
       datum: termin.datum,
       uhrzeit: termin.uhrzeit,
-      klient_id: termin.klientId ? parseInt(termin.klientId) : null,
+      klient_id: termin.klientId || null,
       fachkraft: termin.fachkraft || user?.name || "",
       ort: termin.ort || "",
       notiz: termin.notiz || "",
-      erinnerung: termin.erinnerung || false,
+      erinnerung: Boolean(termin.erinnerung),
       created_by: session.user.id,
     }]).select().single();
     if (data) {
-      setTermine(prev => [...prev, { ...data, klientId: data.klient_id }]);
+      setTermine(prev => [...prev, mapTermin(data)]);
       showToast("Termin gespeichert ✓");
+      return true;
     }
-    if (error) showToast("Fehler beim Speichern", "#c0392b");
+    if (error) showToast(`Termin konnte nicht gespeichert werden: ${error.message}`, "#c0392b");
+    return false;
   };
 
   const deleteTermin = async (id) => {
-    await supabase.from("termine").delete().eq("id", id);
+    const { error } = await supabase.from("termine").delete().eq("id", id);
+    if (error) return showToast("Termin konnte nicht gelöscht werden.", "#c0392b");
     setTermine(prev => prev.filter(t => t.id !== id));
     showToast("Termin gelöscht", "#64748b");
   };
@@ -428,7 +444,7 @@ export default function App() {
 
   const upcomingReminders = termine.filter(t => {
     if (!t.erinnerung) return false;
-    const diff = (new Date(t.datum) - new Date()) / 86400000;
+    const diff = dayDiff(t.datum);
     return diff >= 0 && diff <= 3;
   });
 
@@ -1284,9 +1300,10 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
 function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, showToast }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ titel: "", datum: ds(new Date()), uhrzeit: "09:00", klientId: "", fachkraft: user?.name || "", ort: "", notiz: "", erinnerung: false });
+  const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const today = ds(new Date());
-  const sorted = [...termine].sort((a, b) => new Date(a.datum + "T" + a.uhrzeit) - new Date(b.datum + "T" + b.uhrzeit));
+  const sorted = [...termine].sort((a, b) => new Date(`${a.datum}T${a.uhrzeit || "00:00"}`) - new Date(`${b.datum}T${b.uhrzeit || "00:00"}`));
   const future = sorted.filter(t => t.datum >= today);
   const past = sorted.filter(t => t.datum < today);
   const getKlient = (id) => clients.find(c => c.id == id);
@@ -1353,11 +1370,15 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, sho
           </label>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button onClick={() => setShowNew(false)} style={btnSecondary}>Abbrechen</button>
-            <button onClick={() => {
+            <button disabled={saving} onClick={async () => {
               if (!form.titel || !form.datum) return showToast("Bitte Titel und Datum angeben.", "#c0392b");
-              onAddTermin(form);
+              setSaving(true);
+              const saved = await onAddTermin(form);
+              setSaving(false);
+              if (!saved) return;
               setShowNew(false);
-            }} style={btnPrimary}>Speichern</button>
+              setForm({ titel: "", datum: ds(new Date()), uhrzeit: "09:00", klientId: "", fachkraft: user?.name || "", ort: "", notiz: "", erinnerung: false });
+            }} style={{ ...btnPrimary, opacity: saving ? .7 : 1 }}>{saving ? "Speichert…" : "Speichern"}</button>
           </div>
         </Modal>
       )}
@@ -1366,9 +1387,8 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, sho
 }
 
 function BenachrichtigungenView({ termine, clients, setView, setSelectedClient }) {
-  const today = new Date();
   const getKlient = (id) => clients.find(c => c.id == id);
-  const withDiff = termine.map(t => ({ ...t, diff: Math.ceil((new Date(t.datum) - today) / 86400000) })).sort((a, b) => a.diff - b.diff);
+  const withDiff = termine.map(t => ({ ...t, diff: dayDiff(t.datum) })).sort((a, b) => a.diff - b.diff);
   const upcoming = withDiff.filter(t => t.diff >= 0 && t.diff <= 7 && t.erinnerung);
   const overdue = withDiff.filter(t => t.diff < 0 && t.erinnerung);
   const all = withDiff.filter(t => t.diff >= 0).slice(0, 10);
