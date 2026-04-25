@@ -309,6 +309,8 @@ export default function App() {
       await Promise.all([loadClients(), loadUsers(), loadTermine(), loadNotizen()]);
     };
     loadInitialData();
+    // Loader are intentionally scoped in this component; adding them as deps would refetch on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   // ── CRUD: Klienten ──────────────────────────────────────────────
