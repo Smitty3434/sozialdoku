@@ -71,3 +71,8 @@ assert.match(source, /<iframe[\s\S]*src=\{file\.url\}/, "PDF preview must embed 
 assert.match(source, />Herunterladen</, "PDF preview must provide a download action");
 assert.match(source, />Drucken</, "PDF preview must provide a print action");
 assert.match(source, />Schließen</, "PDF preview must provide a close action");
+
+assert.match(source, /const DEMO_LOGIN = \{ email: "test@deinprojekt\.de", password: "passwort" \}/, "Demo login credentials must be defined");
+assert.match(source, /const \[email,\s*setEmail\]\s*=\s*useState\(DEMO_LOGIN\.email\)/, "Login email field must be prefilled with demo email");
+assert.match(source, /const \[pass,\s*setPass\]\s*=\s*useState\(DEMO_LOGIN\.password\)/, "Login password field must be prefilled with demo password");
+assert.match(source, />Demo-Fachkraft</, "Login screen must show demo user hint");

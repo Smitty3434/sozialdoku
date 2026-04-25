@@ -556,9 +556,11 @@ export default function App() {
 }
 
 // ── Login Screen (Supabase Auth) ───────────────────────────────────
+const DEMO_LOGIN = { email: "test@deinprojekt.de", password: "passwort" };
+
 function LoginScreen({ onLogin }) {
-  const [email, setEmail] = useState("");
-  const [pass, setPass] = useState("");
+  const [email, setEmail] = useState(DEMO_LOGIN.email);
+  const [pass, setPass] = useState(DEMO_LOGIN.password);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -586,8 +588,9 @@ function LoginScreen({ onLogin }) {
             {loading ? "⏳ Anmelden…" : "Anmelden"}
           </button>
           <div style={{ marginTop: 16, background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10, padding: "12px 16px", fontSize: 13, color: "#0369a1" }}>
-            <p style={{ margin: 0, fontWeight: 700, marginBottom: 4 }}>ℹ️ Erster Start?</p>
-            <p style={{ margin: 0, fontSize: 12 }}>Lege zunächst einen Nutzer in Supabase unter Authentication → Users an. Danach kannst du dich hier einloggen.</p>
+            <p style={{ margin: 0, fontWeight: 700, marginBottom: 4 }}>Demo-Fachkraft</p>
+            <p style={{ margin: 0, fontSize: 12 }}>E-Mail: {DEMO_LOGIN.email}</p>
+            <p style={{ margin: "2px 0 0", fontSize: 12 }}>Passwort: {DEMO_LOGIN.password}</p>
           </div>
           <p style={{ fontSize: 11, color: "#94a3b8", textAlign: "center", marginTop: 16 }}>🔒 DSGVO-konform · Serverstandort Frankfurt</p>
         </div>
