@@ -21,13 +21,47 @@ function stateKeys(stateName) {
   return [...match[0].matchAll(/([A-Za-z0-9_]+):\s*\{/g)].map((m) => m[1]);
 }
 
+function openMapEntries() {
+  const match = source.match(/const \[openMap,\s*setOpenMap\]\s*=\s*useState\(\{([\s\S]*?)\}\);/);
+  assert.ok(match, "openMap state was not found");
+  return [...match[1].matchAll(/\b([A-Za-z0-9_]+):\s*(true|false)/g)].map((m) => [m[1], m[2] === "true"]);
+}
+
 const labelKeys = objectKeys("FACHBEREICH_LABELS");
 const emptyFallakteKeys = createEmptyFallakteFachbereichKeys();
 const newDocKeys = stateKeys("newDocs");
+const fallakteSectionKeys = [
+  "klient",
+  "aufgaben",
+  "intern",
+  "extern",
+  "ziele",
+  "dateien",
+  "soziales",
+  "gesundheit",
+  "bildungBeruf",
+  "finanzen",
+  "behoerden",
+  "freizeit",
+  "dokumentation",
+  "notizen",
+];
+const openMap = Object.fromEntries(openMapEntries());
 
 assert.deepEqual(new Set(labelKeys).size, labelKeys.length, "Fachbereich labels must not contain duplicate semantic keys");
 assert.deepEqual(newDocKeys.sort(), labelKeys.sort(), "Every rendered Fachbereich needs matching newDocs state");
 assert.deepEqual(emptyFallakteKeys.sort(), labelKeys.sort(), "Every rendered Fachbereich needs matching fallakte state");
+assert.deepEqual(Object.keys(openMap).sort(), fallakteSectionKeys.sort(), "openMap must cover every fallakte section");
+assert.deepEqual(openMapEntries().filter(([, isOpen]) => isOpen).map(([key]) => key), [], "Every fallakte section must be initially closed");
+
+const mappedSectionKeys = labelKeys;
+const explicitSectionKeys = fallakteSectionKeys.filter((key) => !mappedSectionKeys.includes(key));
+
+assert.match(source, /Object\.entries\(FACHBEREICH_LABELS\)\.map\(\(\[key, label\]\) => \([\s\S]*sectionKey=\{key\}/, "Fachbereich sections must render from FACHBEREICH_LABELS with matching section keys");
+
+for (const key of explicitSectionKeys) {
+  assert.match(source, new RegExp(`sectionKey="${key}"`), `Fallakte section ${key} must be rendered`);
+}
 
 assert.match(source, /@media \(max-width: 920px\) \{[\s\S]*\.sidebar \{[\s\S]*\.main-content \{[\s\S]*\}/, "Mobile sidebar/layout styles must live inside the mobile media query");
 

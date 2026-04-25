@@ -757,7 +757,7 @@ function AkteSection({ sectionKey, title, color = "#0f2647", children, rightCont
 }
 
 function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBericht, canEdit, notizen, user, users, showToast, fallakten, setFallakten }) {
-  const [openMap, setOpenMap] = useState({ klient: true, aufgaben: true, intern: false, extern: false, ziele: true, dateien: false, soziales: true, gesundheit: false, bildungBeruf: false, finanzen: false, behoerden: false, freizeit: false, dokumentation: true, notizen: false });
+  const [openMap, setOpenMap] = useState({ klient: false, aufgaben: false, intern: false, extern: false, ziele: false, dateien: false, soziales: false, gesundheit: false, bildungBeruf: false, finanzen: false, behoerden: false, freizeit: false, dokumentation: false, notizen: false });
   const [newDocs, setNewDocs] = useState({ soziales: { titel: "", text: "", datum: ds(new Date()) }, gesundheit: { titel: "", text: "", datum: ds(new Date()) }, bildungBeruf: { titel: "", text: "", datum: ds(new Date()) }, finanzen: { titel: "", text: "", datum: ds(new Date()) }, behoerden: { titel: "", text: "", datum: ds(new Date()) }, freizeit: { titel: "", text: "", datum: ds(new Date()) } });
   const [quickFields, setQuickFields] = useState({ aufgabe: "", aufgabeDatum: ds(new Date()), externName: "", externStelle: "", externTelefon: "", externEmail: "", ziel: "", zielDatum: ds(new Date()), dateiKategorie: "Dokument", dateiDatum: ds(new Date()) });
   const [selectedInternUserId, setSelectedInternUserId] = useState("");
