@@ -57,7 +57,7 @@ Deno.serve(async (req) => {
 
   const { data: connection } = await adminClient
     .from("outlook_connections")
-    .select("access_token")
+    .select("access_token, refresh_token, token_expires_at")
     .eq("user_id", callerData.user.id)
     .single();
 
@@ -74,11 +74,21 @@ Deno.serve(async (req) => {
     }, 409);
   }
 
+  const accessToken = await getValidAccessToken(adminClient, callerData.user.id, connection);
+  if (!accessToken) {
+    const updated = await markTermin(adminClient, termin.id, {
+      outlook_sync_status: "failed",
+      outlook_sync_error: "Outlook-Verbindung ist abgelaufen. Bitte erneut verbinden.",
+      updated_by: callerData.user.id,
+    });
+    return json({ error: "Outlook-Verbindung ist abgelaufen. Bitte erneut verbinden.", termin: updated }, 409);
+  }
+
   const eventPayload = buildGraphEvent(termin);
   const graphRes = await fetch("https://graph.microsoft.com/v1.0/me/events", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${connection.access_token}`,
+      "Authorization": `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(eventPayload),
@@ -106,6 +116,56 @@ Deno.serve(async (req) => {
 
   return json({ ok: true, outlookEventId: event.id, termin: updated }, 200);
 });
+
+async function getValidAccessToken(adminClient: ReturnType<typeof createClient>, userId: string, connection: Record<string, unknown>) {
+  const expiresAt = connection.token_expires_at ? new Date(String(connection.token_expires_at)).getTime() : 0;
+  if (connection.access_token && expiresAt > Date.now() + 2 * 60 * 1000) {
+    return String(connection.access_token);
+  }
+  if (!connection.refresh_token) return null;
+
+  const tenantId = Deno.env.get("MICROSOFT_TENANT_ID") || "common";
+  const clientId = Deno.env.get("MICROSOFT_CLIENT_ID");
+  const clientSecret = Deno.env.get("MICROSOFT_CLIENT_SECRET");
+  if (!clientId || !clientSecret) return null;
+
+  const tokenRes = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: String(connection.refresh_token),
+      grant_type: "refresh_token",
+      scope: "offline_access User.Read Calendars.ReadWrite",
+    }),
+  });
+
+  const tokenData = await tokenRes.json().catch(() => ({}));
+  if (!tokenRes.ok || !tokenData.access_token) {
+    await adminClient
+      .from("outlook_connections")
+      .update({ last_error: tokenData.error_description || tokenData.error || `Token refresh HTTP ${tokenRes.status}` })
+      .eq("user_id", userId);
+    return null;
+  }
+
+  const expiresInSeconds = Number(tokenData.expires_in || 3600);
+  const tokenExpiresAt = new Date(Date.now() + Math.max(60, expiresInSeconds - 60) * 1000).toISOString();
+  await adminClient
+    .from("outlook_connections")
+    .update({
+      access_token: tokenData.access_token,
+      refresh_token: tokenData.refresh_token || connection.refresh_token,
+      token_type: tokenData.token_type || "Bearer",
+      token_expires_at: tokenExpiresAt,
+      scopes: String(tokenData.scope || "").split(/\s+/).filter(Boolean),
+      last_error: null,
+    })
+    .eq("user_id", userId);
+
+  return String(tokenData.access_token);
+}
 
 async function canEditTermin(adminClient: ReturnType<typeof createClient>, profile: { id: string; rolle: string }, termin: Record<string, unknown>) {
   if (profile.rolle === "Admin" || profile.rolle === "Leitung") return true;

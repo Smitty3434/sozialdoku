@@ -14,14 +14,18 @@ Deno.serve(async (req) => {
   const redirectUri = Deno.env.get("MICROSOFT_REDIRECT_URI");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-  if (!supabaseUrl || !anonKey) {
+  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
     return json({ error: "Server configuration is incomplete." }, 500);
   }
 
   const authHeader = req.headers.get("Authorization") || "";
   const userClient = createClient(supabaseUrl, anonKey, {
     global: { headers: { Authorization: authHeader } },
+  });
+  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
   });
   const { data: callerData, error: callerError } = await userClient.auth.getUser();
   if (callerError || !callerData.user) return json({ error: "Nicht authentifiziert." }, 401);
@@ -35,6 +39,23 @@ Deno.serve(async (req) => {
   }
 
   const state = crypto.randomUUID();
+  await adminClient
+    .from("outlook_oauth_states")
+    .delete()
+    .lt("expires_at", new Date().toISOString());
+
+  const { error: stateError } = await adminClient
+    .from("outlook_oauth_states")
+    .insert({
+      state,
+      user_id: callerData.user.id,
+      expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    });
+
+  if (stateError) {
+    return json({ error: "Outlook-Verbindung konnte nicht vorbereitet werden." }, 500);
+  }
+
   const scope = [
     "offline_access",
     "User.Read",

@@ -265,6 +265,11 @@ function AppContent() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [users, setUsers] = useState([]);
   const [termine, setTermine] = useState([]);
+  const [outlookConnection, setOutlookConnection] = useState({ connected: false });
+  const [outlookEvents, setOutlookEvents] = useState([]);
+  const [outlookRelevantOnly, setOutlookRelevantOnly] = useState(true);
+  const [outlookEventsLoading, setOutlookEventsLoading] = useState(false);
+  const [outlookEventsError, setOutlookEventsError] = useState("");
   const [notizen, setNotizen] = useState([]);
   const [selectedClient, setSelectedClient] = useState(null);
   const [search, setSearch] = useState("");
@@ -580,6 +585,30 @@ function AppContent() {
     setTermine((data || []).map(mapTermin));
   };
 
+  const loadOutlookStatus = async () => {
+    const { data, error } = await supabase.functions.invoke("outlook-status", { body: {} });
+    if (!error && data) setOutlookConnection(data);
+  };
+
+  const loadOutlookEvents = async (relevantOnly = outlookRelevantOnly, silent = true) => {
+    setOutlookEventsLoading(true);
+    setOutlookEventsError("");
+    const { data, error } = await supabase.functions.invoke("outlook-list-events", {
+      body: { relevantOnly, days: 60 },
+    });
+    setOutlookEventsLoading(false);
+    if (error || data?.error) {
+      const message = data?.error || error?.message || "Outlook-Termine konnten nicht geladen werden.";
+      setOutlookEventsError(message);
+      setOutlookEvents([]);
+      if (!silent) showToast(message, "#c0392b");
+      return false;
+    }
+    setOutlookEvents(data?.events || []);
+    setOutlookEventsError("");
+    return true;
+  };
+
   const loadNotizen = async () => {
     let query = supabase.from("notizen").select("*").order("pinned", { ascending: false });
     if (role === "Fachkraft") {
@@ -616,13 +645,21 @@ function AppContent() {
         (isAdmin || isLeitung) ? loadUsers() : Promise.resolve(setUsers([])),
         loadFreigaben(),
         loadTermine(),
-        loadNotizen()
+        loadNotizen(),
+        loadOutlookStatus(),
+        loadOutlookEvents(outlookRelevantOnly)
       ]);
     };
     loadInitialData();
     // Loader are intentionally scoped in this component; adding them as deps would refetch on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, user]);
+
+  useEffect(() => {
+    if (!session || !user) return;
+    loadOutlookEvents(outlookRelevantOnly);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [outlookRelevantOnly]);
 
   useEffect(() => () => {
     dictationManuallyStoppedRef.current = true;
@@ -871,6 +908,12 @@ function AppContent() {
       return;
     }
     showToast("Outlook-Verbindung ist serverseitig vorbereitet, aber noch nicht konfiguriert.", "#64748b");
+  };
+
+  const refreshOutlookStatus = async () => {
+    await loadOutlookStatus();
+    await loadOutlookEvents(outlookRelevantOnly, true);
+    showToast("Outlook-Status aktualisiert ✓", "#64748b");
   };
 
   const updateTerminStatus = async (id, status) => {
@@ -1130,7 +1173,7 @@ function AppContent() {
             )}
             {view === "detail" && selectedClient && !canViewClient(selectedClient.id) && <AccessDeniedView setView={setView} />}
             {view === "notizen" && <NotizenView notizen={visibleNotizen} onAdd={addNotiz} onUpdate={updateNotiz} onDelete={deleteNotiz} user={user} clients={visibleClients} showToast={showToast} />}
-            {view === "kalender" && <KalenderView termine={visibleTermine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} onConnectOutlook={startOutlookConnect} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} />}
+            {view === "kalender" && <KalenderView termine={visibleTermine} outlookConnection={outlookConnection} outlookEvents={outlookEvents} outlookEventsLoading={outlookEventsLoading} outlookEventsError={outlookEventsError} outlookRelevantOnly={outlookRelevantOnly} setOutlookRelevantOnly={setOutlookRelevantOnly} onLoadOutlookEvents={() => loadOutlookEvents(outlookRelevantOnly, false)} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} onConnectOutlook={startOutlookConnect} onRefreshOutlook={refreshOutlookStatus} onSyncOutlookTermin={syncOutlookTermin} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} />}
             {view === "benachrichtigungen" && <BenachrichtigungenView termine={visibleTermine} clients={visibleClients} setView={setView} setSelectedClient={setSelectedClient} />}
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
             {view === "stunden" && <StundenView clients={visibleClients} eintraege={eintraege} />}
@@ -2395,7 +2438,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
   );
 }
 
-function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStatus, onConnectOutlook, canEditTermin, clients, user, showToast }) {
+function KalenderView({ termine, outlookConnection, onAddTermin, onDeleteTermin, onUpdateTerminStatus, onConnectOutlook, onRefreshOutlook, onSyncOutlookTermin, canEditTermin, clients, user, showToast }) {
   const [showNew, setShowNew] = useState(false);
   const initialTerminForm = { titel: "", datum: ds(new Date()), uhrzeit: "09:00", klientId: "", fachkraft: user?.name || "", ort: "", notiz: "", erinnerung: false, outlookSync: false };
   const [form, setForm] = useState(initialTerminForm);
@@ -2409,6 +2452,14 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
   const future = openTermine.filter(t => t.datum >= today);
   const past = openTermine.filter(t => t.datum < today);
   const getKlient = (id) => clients.find(c => c.id == id);
+  const outlookStatusLine = (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+      <span style={{ ...statusChipStyle, background: outlookConnection?.connected ? "#ecfdf5" : "#f8fafc", borderColor: outlookConnection?.connected ? "#bbf7d0" : "#e2e8f0", color: outlookConnection?.connected ? "#166534" : "#64748b" }}>
+        {outlookConnection?.connected ? `Outlook verbunden${outlookConnection.email ? `: ${outlookConnection.email}` : ""}` : "Outlook nicht verbunden"}
+      </span>
+      <button type="button" onClick={onRefreshOutlook} style={{ ...btnSecondary, fontSize: 12, padding: "5px 9px" }}>Status aktualisieren</button>
+    </div>
+  );
   const StatusControl = ({ termin }) => (
     <select value={termin.status || "geplant"} disabled={!canEditTermin?.(termin)} onChange={e => onUpdateTerminStatus?.(termin.id, e.target.value)} style={{ ...statusSelectStyle, opacity: canEditTermin?.(termin) ? 1 : .55, cursor: canEditTermin?.(termin) ? "pointer" : "not-allowed" }}>
       {TERMIN_STATUS.map(status => <option key={status} value={status}>{status}</option>)}
@@ -2425,7 +2476,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-        <div><IconHeading icon="termine" level="h1" style={pageTitle}>Kalender & Termine</IconHeading><p style={pageSubtitle}>{future.length} anstehende Termine · {completedTermine.length} erledigt ausgeblendet</p></div>
+        <div><IconHeading icon="termine" level="h1" style={pageTitle}>Kalender & Termine</IconHeading><p style={pageSubtitle}>{future.length} anstehende Termine · {completedTermine.length} erledigt ausgeblendet</p>{outlookStatusLine}</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={onConnectOutlook} style={btnSecondary}>Outlook verbinden</button>
           <button onClick={() => setShowCompleted(p => !p)} style={btnSecondary}>{showCompleted ? "Erledigte ausblenden" : "Erledigte Termine anzeigen"}</button>
@@ -2456,7 +2507,10 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
                     <p style={{ margin: "3px 0", fontSize: 12, color: "#64748b" }}>🕐 {t.uhrzeit} · 📍 {t.ort}</p>
                     {k && <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}>👤 {k.name}</p>}
                     {t.erinnerung && <span style={{ fontSize: 11, color: "#f59e0b" }}>🔔 Erinnerung aktiv</span>}
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}><OutlookSyncBadge termin={t} /></div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                      <OutlookSyncBadge termin={t} />
+                      {canEditTermin?.(t) && t.outlook_sync_status !== "synced" && <button type="button" onClick={() => onSyncOutlookTermin?.(t.id)} style={{ ...btnSecondary, fontSize: 11, padding: "3px 8px" }}>Outlook synchronisieren</button>}
+                    </div>
                     <TerminAuditLine termin={t} />
                   </div>
                   <button onClick={() => onDeleteTermin(t.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 18, padding: 4 }}>✕</button>
@@ -2476,7 +2530,10 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
                 <StatusControl termin={t} />
               </div>
               <p style={{ margin: "2px 0", fontSize: 11, color: "#94a3b8" }}>{formatDate(t.datum)} {t.uhrzeit} {k ? `· ${k.name}` : ""}</p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}><OutlookSyncBadge termin={t} /></div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                <OutlookSyncBadge termin={t} />
+                {canEditTermin?.(t) && t.outlook_sync_status !== "synced" && <button type="button" onClick={() => onSyncOutlookTermin?.(t.id)} style={{ ...btnSecondary, fontSize: 11, padding: "3px 8px" }}>Outlook synchronisieren</button>}
+              </div>
               <TerminAuditLine termin={t} />
             </div>;
           })}
@@ -2493,7 +2550,10 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
                 <div style={{ minWidth: 0 }}>
                   <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#1e293b" }}>{t.titel}</p>
                   <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{formatDate(t.datum)} {t.uhrzeit}{k ? ` · ${k.name}` : ""}{t.ort ? ` · ${t.ort}` : ""}</p>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}><OutlookSyncBadge termin={t} /></div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                    <OutlookSyncBadge termin={t} />
+                    {canEditTermin?.(t) && t.outlook_sync_status !== "synced" && <button type="button" onClick={() => onSyncOutlookTermin?.(t.id)} style={{ ...btnSecondary, fontSize: 11, padding: "3px 8px" }}>Outlook synchronisieren</button>}
+                  </div>
                   <TerminAuditLine termin={t} />
                 </div>
                 <StatusControl termin={t} />
