@@ -147,11 +147,72 @@ const dayDiff = (date, from = new Date()) => {
   return differenceInCalendarDays(startOfDay(parsed), startOfDay(from));
 };
 
-// ── PDF Export ─────────────────────────────────────────────────────
-const exportPDF = (client, eintraege) => {
-  const rows = eintraege.map(e => `<tr style="border-bottom:1px solid #e5e7eb"><td style="padding:8px;color:#555">${formatDate(e.datum)}</td><td style="padding:8px"><span style="background:${typBg(e.typ)};color:${typeColor(e.typ)};padding:2px 8px;border-radius:4px;font-size:12px">${e.typ}</span></td><td style="padding:8px;font-weight:600">${e.titel}</td><td style="padding:8px;color:#555">${e.text}</td><td style="padding:8px;color:#555">${e.fachkraft}</td></tr>`).join("");
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bericht</title><style>body{font-family:Arial,sans-serif;padding:40px;color:#1a1a2e}h1{color:#1a3a6e}table{width:100%;border-collapse:collapse}th{background:#1a3a6e;color:#fff;padding:10px;text-align:left}</style></head><body><h1>Dokumentation: ${client.name}</h1><p><strong>Aktenzeichen:</strong> ${client.aktenzeichen} | <strong>Einrichtung:</strong> ${client.einrichtung}</p><hr/><table><thead><tr><th>Datum</th><th>Typ</th><th>Titel</th><th>Beschreibung</th><th>Fachkraft</th></tr></thead><tbody>${rows || "<tr><td colspan='5' style='padding:16px;text-align:center'>Keine Einträge</td></tr>"}</tbody></table><p style="margin-top:40px;font-size:11px;color:#aaa">SozialDoku · DSGVO-konform</p></body></html>`;
-  const w = window.open("", "_blank"); w.document.write(html); w.document.close(); w.print();
+// ── Print / PDF Export ─────────────────────────────────────────────
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;" }[char]));
+const printValue = (value) => escapeHtml(value || "–");
+const printList = (items, render, empty = "Keine Einträge.") => (items || []).length
+  ? items.map(render).join("")
+  : `<p class="empty">${escapeHtml(empty)}</p>`;
+
+const printFallakte = ({ client, akte, dokumentation, notizen, termine, user }) => {
+  const section = (title, body) => `<section><h2>${escapeHtml(title)}</h2>${body}</section>`;
+  const simpleTable = (rows) => `<table>${rows}</table>`;
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Fallakte ${escapeHtml(client.name)}</title><style>
+    @page{margin:18mm}
+    *{box-sizing:border-box}
+    body{font-family:Arial,Helvetica,sans-serif;color:#111827;background:#fff;margin:0;padding:32px;font-size:12px;line-height:1.55}
+    header{border-bottom:2px solid #111827;padding-bottom:16px;margin-bottom:20px}
+    h1{font-size:25px;margin:0 0 8px;color:#0f172a}
+    h2{font-size:15px;margin:0 0 10px;color:#111827;border-bottom:1px solid #d1d5db;padding-bottom:6px}
+    h3{font-size:13px;margin:0 0 4px;color:#1f2937}
+    p{margin:0 0 6px}
+    .meta{color:#4b5563;font-size:11px}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px}
+    section{break-inside:avoid;page-break-inside:avoid;margin:0 0 18px}
+    table{width:100%;border-collapse:collapse;margin-top:4px}
+    td,th{border-bottom:1px solid #e5e7eb;padding:7px 6px;text-align:left;vertical-align:top}
+    th{font-size:10px;text-transform:uppercase;color:#6b7280;background:#f9fafb}
+    .record{border:1px solid #e5e7eb;border-radius:6px;padding:9px 10px;margin:8px 0;break-inside:avoid;page-break-inside:avoid}
+    .status{display:inline-block;border:1px solid #cbd5e1;border-radius:999px;padding:1px 7px;font-size:10px;color:#334155;background:#f8fafc;margin-left:6px}
+    .empty{color:#6b7280;font-style:italic}
+    .footer{border-top:1px solid #e5e7eb;margin-top:24px;padding-top:10px;color:#6b7280;font-size:10px}
+    @media print{body{padding:0}.no-print{display:none!important}a{color:inherit;text-decoration:none}}
+  </style></head><body>
+    <header>
+      <h1>Fallakte ${escapeHtml(client.name)}</h1>
+      <p class="meta">Aktenzeichen ${printValue(client.aktenzeichen)} · ${printValue(client.einrichtung)} · Ausdruck vom ${formatDate(new Date())}${user?.name ? ` · erstellt von ${escapeHtml(user.name)}` : ""}</p>
+    </header>
+    ${section("Kopfbereich", `<div class="grid">
+      <p><strong>Name:</strong> ${printValue(client.name)}</p>
+      <p><strong>Geburtsdatum:</strong> ${formatDate(client.dob)}</p>
+      <p><strong>Status:</strong> ${printValue(client.status)}</p>
+      <p><strong>Einrichtung:</strong> ${printValue(client.einrichtung)}</p>
+    </div>`)}
+    ${section("Klient", simpleTable(`
+      <tr><th>Feld</th><th>Angabe</th></tr>
+      <tr><td>Telefon</td><td>${printValue(akte.klient?.telefon)}</td></tr>
+      <tr><td>E-Mail</td><td>${printValue(akte.klient?.email)}</td></tr>
+      <tr><td>Adresse</td><td>${printValue(akte.klient?.adresse)}</td></tr>
+      <tr><td>Beginn Hilfe</td><td>${formatDate(akte.klient?.beginnHilfe)}</td></tr>
+      <tr><td>Hilfeart</td><td>${printValue(akte.klient?.hilfeart)}</td></tr>
+      <tr><td>Bezugspersonen</td><td>${printValue(akte.klient?.bezugspersonen)}</td></tr>
+      <tr><td>Besondere Hinweise</td><td>${printValue(akte.klient?.besondereHinweise)}</td></tr>
+    `))}
+    ${section("Ziele", printList(akte.ziele, item => `<div class="record"><h3>${escapeHtml(item.titel)} <span class="status">${printValue(item.status)}</span></h3><p class="meta">${formatDate(item.datum)}</p>${item.notiz ? `<p>${escapeHtml(item.notiz)}</p>` : ""}</div>`, "Keine Ziele erfasst."))}
+    ${section("Aufgaben", printList(akte.aufgaben, item => `<div class="record"><h3>${escapeHtml(item.titel)} <span class="status">${printValue(item.status)}</span></h3><p class="meta">${formatDate(item.datum)}</p>${item.notiz ? `<p>${escapeHtml(item.notiz)}</p>` : ""}</div>`, "Keine Aufgaben erfasst."))}
+    ${section("Zuständigkeit intern", printList(akte.intern, item => `<div class="record"><h3>${escapeHtml(item.name)}</h3><p class="meta">${printValue(item.rolle)}${item.email ? ` · ${escapeHtml(item.email)}` : ""}${item.telefon ? ` · ${escapeHtml(item.telefon)}` : ""}</p></div>`, "Keine internen Zuständigkeiten hinterlegt."))}
+    ${section("Zuständigkeit extern", printList(akte.extern, item => `<div class="record"><h3>${escapeHtml(item.name || item.stelle)}</h3><p class="meta">${printValue(item.stelle)}${item.rolle ? ` · ${escapeHtml(item.rolle)}` : ""}${item.email ? ` · ${escapeHtml(item.email)}` : ""}${item.telefon ? ` · ${escapeHtml(item.telefon)}` : ""}</p></div>`, "Keine externen Zuständigkeiten hinterlegt."))}
+    ${section("Dokumentation / Fallverlauf", printList(dokumentation, item => `<div class="record"><h3>${escapeHtml(item.titel)}</h3><p class="meta">${formatDate(item.datum)} · ${printValue(item.quelle)} · ${printValue(item.kontaktart)}${item.autor ? ` · ${escapeHtml(item.autor)}` : ""}</p><p>${escapeHtml(item.text)}</p></div>`, "Keine Dokumentation vorhanden."))}
+    ${section("Termine", printList(termine, item => `<div class="record"><h3>${escapeHtml(item.titel)} <span class="status">${printValue(item.status)}</span></h3><p class="meta">${formatDate(item.datum)} ${escapeHtml(item.uhrzeit || "")}${item.ort ? ` · ${escapeHtml(item.ort)}` : ""}</p>${item.notiz ? `<p>${escapeHtml(item.notiz)}</p>` : ""}</div>`, "Keine Termine vorhanden."))}
+    ${section("Notizen zum Klienten", printList(notizen, item => `<div class="record"><h3>${escapeHtml(item.titel)}</h3><p class="meta">${printValue(item.autor)}${item.created_at ? ` · ${formatDate(item.created_at)}` : ""}</p>${item.text ? `<p>${escapeHtml(item.text)}</p>` : ""}</div>`, "Keine Notizen zum Klienten vorhanden."))}
+    ${section("Dateien", printList(akte.dateien, item => `<div class="record"><h3>${escapeHtml(item.name)}</h3><p class="meta">${printValue(item.kategorie)} · ${formatDate(item.datum)}${item.size ? ` · ${(item.size / 1024).toFixed(1)} KB` : ""}</p></div>`, "Keine Dateien hinterlegt."))}
+    <p class="footer">SozialDoku · Druckansicht enthält nur Inhalte, die in der aktuellen Sitzung sichtbar sind.</p>
+    <script>window.onload=function(){window.focus();window.print();}</script>
+  </body></html>`;
+  const w = window.open("", "_blank");
+  if (!w) return;
+  w.document.write(html);
+  w.document.close();
 };
 
 // ══════════════════════════════════════════════════════════════════
@@ -886,9 +947,9 @@ function AppContent() {
                 canEdit={selectedClientCanEdit}
                 permissions={permissions}
                 onNewEintrag={selectedClientCanEdit ? openNewEintrag : null}
-                onExport={() => exportPDF(selectedClient, eintraege[selectedClient.id] || [])}
                 onKiBericht={() => setView("kibericht")}
                 notizen={visibleNotizen}
+                termine={visibleTermine}
                 deleteNotiz={deleteNotiz}
                 user={user}
                 users={users}
@@ -1459,7 +1520,7 @@ function NoteRecord({ note }) {
   );
 }
 
-function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBericht, canEdit, permissions, notizen, user, users, showToast, fallakten, setFallakten, setEintraege }) {
+function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canEdit, permissions, notizen, termine, user, users, showToast, fallakten, setFallakten, setEintraege }) {
   const [openMap, setOpenMap] = useState({ klient: false, aufgaben: false, intern: false, extern: false, ziele: false, dateien: false, soziales: false, gesundheit: false, bildungBeruf: false, finanzen: false, behoerden: false, freizeit: false, dokumentation: false, notizen: false });
   const [newDocs, setNewDocs] = useState({ soziales: { titel: "", text: "", datum: ds(new Date()) }, gesundheit: { titel: "", text: "", datum: ds(new Date()) }, bildungBeruf: { titel: "", text: "", datum: ds(new Date()) }, finanzen: { titel: "", text: "", datum: ds(new Date()) }, behoerden: { titel: "", text: "", datum: ds(new Date()) }, freizeit: { titel: "", text: "", datum: ds(new Date()) } });
   const [quickFields, setQuickFields] = useState({ aufgabe: "", aufgabeDatum: ds(new Date()), externName: "", externStelle: "", externTelefon: "", externEmail: "", ziel: "", zielDatum: ds(new Date()), dateiKategorie: "Dokument", dateiDatum: ds(new Date()) });
@@ -1471,6 +1532,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   const fileInputRef = useRef(null);
   const akte = fallakten?.[client.id] || createEmptyFallakte(client);
   const clientNotizen = (notizen || []).filter(n => n.klientId == client.id);
+  const clientTermine = (termine || []).filter(t => String(t.klientId) === String(client.id));
   const interneAuswahl = (users || []).filter(u => u.rolle === "Fachkraft" || u.rolle === "Leitung" || u.rolle === "Admin");
   const canDeleteRecords = permissions?.canDeleteRecords;
   const canDeleteFiles = permissions?.canDeleteFiles;
@@ -1850,6 +1912,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
       farbe: typeColor(e.typ),
     })),
   ].sort((a, b) => new Date(b.datum) - new Date(a.datum));
+  const printCurrentFallakte = () => printFallakte({ client, akte, dokumentation: chronoDokumentation, notizen: clientNotizen, termine: clientTermine, user });
 
   return (
     <div>
@@ -1862,7 +1925,8 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
             <p style={{ margin: "6px 0 0", color: "#64748b", fontSize: 13 }}>Aktenzeichen {client.aktenzeichen} · {client.einrichtung} · Hilfeart: {akte.klient.hilfeart || "—"}</p>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <HeaderButton onClick={onExport}>📄 PDF</HeaderButton>
+            <HeaderButton onClick={printCurrentFallakte}>Drucken</HeaderButton>
+            <HeaderButton onClick={printCurrentFallakte}>PDF-Ansicht</HeaderButton>
             <HeaderButton onClick={onKiBericht}>🤖 KI-Bericht</HeaderButton>
             {canEdit && <HeaderButton primary onClick={onNewEintrag}>+ Dokumentation</HeaderButton>}
           </div>
