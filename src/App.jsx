@@ -137,6 +137,7 @@ const formatDate = (d) => {
 const typeColor = () => "#475569";
 const typBg = () => "#f1f5f9";
 const rolleStyle = (r) => ROLLEN_FARBEN[r] || { bg: "#f1f5f9", color: "#475569" };
+const normalizeRole = (role) => ROLLEN.includes(role) ? role : "Fachkraft";
 const mapTermin = (t) => ({ ...t, klientId: t.klient_id, erinnerung: Boolean(t.erinnerung) });
 const dayDiff = (date, from = new Date()) => {
   const parsed = parseAppDate(date);
@@ -212,6 +213,33 @@ function AppContent() {
   });
 
   const showToast = (msg, color = "#16825a") => { setToast({ msg, color }); setTimeout(() => setToast(null), 2800); };
+  const role = normalizeRole(user?.rolle);
+  const isAdmin = role === "Admin";
+  const isLeitung = role === "Leitung";
+  const isFachkraft = role === "Fachkraft";
+  const assignedClientIds = new Set(Object.entries(fallakten || {})
+    .filter(([, akte]) => (akte.intern || []).some(i => String(i.userId) === String(user?.id)))
+    .map(([id]) => String(id)));
+  const canViewClient = (clientId) => isAdmin || isLeitung || assignedClientIds.has(String(clientId));
+  const canEditClientContent = (clientId) => isAdmin || isLeitung || (isFachkraft && assignedClientIds.has(String(clientId)));
+  const visibleClients = clients.filter(c => canViewClient(c.id));
+  const visibleClientIds = new Set(visibleClients.map(c => String(c.id)));
+  const visibleTermine = termine.filter(t => !t.klientId || visibleClientIds.has(String(t.klientId)));
+  const visibleNotizen = notizen.filter(n => !n.klientId || visibleClientIds.has(String(n.klientId)));
+  const permissions = {
+    role,
+    canViewAllCases: isAdmin || isLeitung,
+    canManageUsers: isAdmin,
+    canUseAdminSettings: isAdmin,
+    canCreateClient: isAdmin,
+    canManageAssignments: isAdmin || isLeitung,
+    canDeleteRecords: isAdmin,
+    canDeleteFiles: isAdmin,
+  };
+  const deny = (message = "Dafür fehlen deiner Rolle die erforderlichen Rechte.") => {
+    showToast(message, "#c0392b");
+    return false;
+  };
 
   // ── Profil laden ────────────────────────────────────────────────
   const loadUserProfile = async (uid) => {
@@ -220,11 +248,33 @@ function AppContent() {
     setLoading(false);
   };
 
-  const loadClients = async () => {
+  const loadAssignedClientIds = async () => {
+    if (role !== "Fachkraft") return null;
     const { data, error } = await supabase
-      .from("klienten")
-      .select("*")
-      .order("name");
+      .from("zustaendigkeit_intern")
+      .select("klient_id")
+      .eq("nutzer_id", user?.id);
+    if (error) {
+      showToast("Zuständigkeiten konnten nicht geladen werden.", "#c0392b");
+      return [];
+    }
+    return [...new Set((data || []).map(a => a.klient_id).filter(Boolean))];
+  };
+
+  const loadClients = async () => {
+    let clientQuery = supabase.from("klienten").select("*").order("name");
+    if (role === "Fachkraft") {
+      const allowedIds = await loadAssignedClientIds();
+      if (!allowedIds.length) {
+        setClients([]);
+        setEintraege({});
+        setFallakten({});
+        return;
+      }
+      clientQuery = clientQuery.in("id", allowedIds);
+    }
+
+    const { data, error } = await clientQuery;
 
     if (error) {
       showToast("Klienten konnten nicht geladen werden.", "#c0392b");
@@ -378,7 +428,14 @@ function AppContent() {
   };
 
   const loadTermine = async () => {
-    const { data, error } = await supabase.from("termine").select("*").order("datum", { ascending: true }).order("uhrzeit", { ascending: true });
+    let query = supabase.from("termine").select("*").order("datum", { ascending: true }).order("uhrzeit", { ascending: true });
+    if (role === "Fachkraft") {
+      const allowedIds = await loadAssignedClientIds();
+      query = allowedIds.length
+        ? query.or(`klient_id.is.null,klient_id.in.(${allowedIds.join(",")})`)
+        : query.is("klient_id", null);
+    }
+    const { data, error } = await query;
     if (error) {
       showToast("Termine konnten nicht geladen werden.", "#c0392b");
       return;
@@ -387,7 +444,14 @@ function AppContent() {
   };
 
   const loadNotizen = async () => {
-    const { data } = await supabase.from("notizen").select("*").order("pinned", { ascending: false });
+    let query = supabase.from("notizen").select("*").order("pinned", { ascending: false });
+    if (role === "Fachkraft") {
+      const allowedIds = await loadAssignedClientIds();
+      query = allowedIds.length
+        ? query.or(`klient_id.is.null,klient_id.in.(${allowedIds.join(",")})`)
+        : query.is("klient_id", null);
+    }
+    const { data } = await query;
     if (data) setNotizen(data.map(n => ({ ...n, klientId: n.klient_id })));
   };
 
@@ -408,14 +472,19 @@ function AppContent() {
 
   // ── Daten laden nach Login ──────────────────────────────────────
   useEffect(() => {
-    if (!session) return;
+    if (!session || !user) return;
     const loadInitialData = async () => {
-      await Promise.all([loadClients(), loadUsers(), loadTermine(), loadNotizen()]);
+      await Promise.all([
+        loadClients(),
+        (isAdmin || isLeitung) ? loadUsers() : Promise.resolve(setUsers([])),
+        loadTermine(),
+        loadNotizen()
+      ]);
     };
     loadInitialData();
     // Loader are intentionally scoped in this component; adding them as deps would refetch on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
+  }, [session, user]);
 
   useEffect(() => () => {
     if (speechRecognitionRef.current) speechRecognitionRef.current.stop();
@@ -423,6 +492,7 @@ function AppContent() {
 
   // ── CRUD: Klienten ──────────────────────────────────────────────
   const addClient = async (clientData) => {
+    if (!permissions.canCreateClient) return deny("Nur Admins dürfen neue Fallakten anlegen.");
     const { data, error } = await supabase.from("klienten").insert([{
       name: clientData.name,
       dob: clientData.dob || null,
@@ -441,6 +511,7 @@ function AppContent() {
 
   // ── CRUD: Einträge ──────────────────────────────────────────────
   const addEintrag = async (eintrag, klientId) => {
+    if (!canEditClientContent(klientId)) return deny("Du darfst in dieser Fallakte keine Dokumentation anlegen.");
     const { data, error } = await supabase.from("eintraege").insert([{
       klient_id: klientId,
       datum: eintrag.datum,
@@ -555,6 +626,7 @@ function AppContent() {
 
   // ── CRUD: Termine ───────────────────────────────────────────────
   const addTermin = async (termin) => {
+    if (termin.klientId && !canEditClientContent(termin.klientId)) return deny("Du darfst für diese Fallakte keinen Termin anlegen.");
     const { data, error } = await supabase.from("termine").insert([{
       titel: termin.titel,
       datum: termin.datum,
@@ -576,6 +648,9 @@ function AppContent() {
   };
 
   const deleteTermin = async (id) => {
+    const existing = termine.find(t => String(t.id) === String(id));
+    if (existing?.klientId && !canEditClientContent(existing.klientId)) return deny("Du darfst diesen Termin nicht löschen.");
+    if (!existing?.klientId && !isAdmin && existing?.created_by !== user?.id) return deny("Du darfst nur eigene allgemeine Termine löschen.");
     const { error } = await supabase.from("termine").delete().eq("id", id);
     if (error) return showToast("Termin konnte nicht gelöscht werden.", "#c0392b");
     setTermine(prev => prev.filter(t => t.id !== id));
@@ -584,6 +659,7 @@ function AppContent() {
 
   // ── CRUD: Notizen ───────────────────────────────────────────────
   const addNotiz = async (notiz) => {
+    if (notiz.klientId && !canEditClientContent(notiz.klientId)) return deny("Du darfst für diese Fallakte keine Notiz anlegen.");
     const { data, error } = await supabase.from("notizen").insert([{
       titel: notiz.titel,
       text: notiz.text || "",
@@ -603,11 +679,19 @@ function AppContent() {
   };
 
   const updateNotiz = async (id, updates) => {
+    const existing = notizen.find(n => String(n.id) === String(id));
+    if (!existing) return deny("Notiz wurde nicht gefunden.");
+    const isOwner = existing.created_by === user?.id || existing.autor === user?.name;
+    if (!isAdmin && !isOwner) return deny("Du darfst nur eigene Notizen bearbeiten.");
+    if ((updates.klient_id || updates.klientId || existing.klientId) && !canEditClientContent(updates.klient_id || updates.klientId || existing.klientId)) return deny("Du darfst diese Notiz nicht dieser Fallakte zuordnen.");
     const { error } = await supabase.from("notizen").update(updates).eq("id", id);
     if (!error) setNotizen(prev => prev.map(n => n.id === id ? { ...n, ...updates } : n));
   };
 
   const deleteNotiz = async (id) => {
+    const existing = notizen.find(n => String(n.id) === String(id));
+    const isOwner = existing?.created_by === user?.id || existing?.autor === user?.name;
+    if (!isAdmin && !isOwner) return deny("Du darfst nur eigene Notizen löschen.");
     await supabase.from("notizen").delete().eq("id", id);
     setNotizen(prev => prev.filter(n => n.id !== id));
     showToast("Notiz gelöscht", "#64748b");
@@ -615,6 +699,7 @@ function AppContent() {
 
   // ── Nutzer verwalten (Admin) ────────────────────────────────────
   const toggleNutzer = async (id, aktiv) => {
+    if (!permissions.canManageUsers) return deny("Nur Admins dürfen Nutzer aktivieren oder deaktivieren.");
     await supabase.from("nutzer").update({ aktiv }).eq("id", id);
     setUsers(prev => prev.map(u => u.id === id ? { ...u, aktiv } : u));
     showToast(aktiv ? "Nutzer aktiviert ✓" : "Nutzer deaktiviert", aktiv ? "#16825a" : "#c0392b");
@@ -634,7 +719,7 @@ function AppContent() {
     setNewEintrag(null);
   };
 
-  const upcomingReminders = termine.filter(t => {
+  const upcomingReminders = visibleTermine.filter(t => {
     if (!t.erinnerung) return false;
     const diff = dayDiff(t.datum);
     return diff >= 0 && diff <= 3;
@@ -655,7 +740,7 @@ function AppContent() {
     return null;
   }} />;
 
-  const filteredClients = clients.filter(c => {
+  const filteredClients = visibleClients.filter(c => {
     const q = search.toLowerCase();
     const matchesSearch =
       c.name.toLowerCase().includes(q) ||
@@ -665,9 +750,8 @@ function AppContent() {
     return matchesSearch && matchesStatus;
   });
 
-  const canEdit = user?.rolle === "Admin" || user?.rolle === "Fachkraft";
-  const isAdmin = user?.rolle === "Admin";
   const speechSupported = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
+  const selectedClientCanEdit = selectedClient ? canEditClientContent(selectedClient.id) : false;
 
   return (
     <>
@@ -677,7 +761,7 @@ function AppContent() {
 
       <div className="app-layout">
         {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
-        <Sidebar view={view} setView={(v) => { setView(v); setSidebarOpen(false); }} user={user} onLogout={async () => { await supabase.auth.signOut(); }} isOpen={sidebarOpen} notifications={upcomingReminders.length} isAdmin={isAdmin} />
+        <Sidebar view={view} setView={(v) => { setView(v); setSidebarOpen(false); }} user={user} onLogout={async () => { await supabase.auth.signOut(); }} isOpen={sidebarOpen} notifications={upcomingReminders.length} permissions={permissions} />
 
         <div className="main-wrapper">
           <div className="mobile-header">
@@ -687,18 +771,19 @@ function AppContent() {
           </div>
 
           <main className="main-content">
-            {view === "dashboard" && <Dashboard clients={clients} fallakten={fallakten} eintraege={eintraege} termine={termine} setView={setView} setSelectedClient={setSelectedClient} user={user} />}
-            {view === "clients" && <ClientsView clients={filteredClients} allClients={clients} search={search} setSearch={setSearch} statusFilter={clientStatusFilter} setStatusFilter={setClientStatusFilter} onSelect={(c) => { setSelectedClient(c); setView("detail"); }} onNew={canEdit ? () => setShowNewClient(true) : null} />}
-            {view === "detail" && selectedClient && (
+            {view === "dashboard" && <Dashboard clients={visibleClients} fallakten={fallakten} eintraege={eintraege} termine={visibleTermine} setView={setView} setSelectedClient={setSelectedClient} user={user} permissions={permissions} />}
+            {view === "clients" && <ClientsView clients={filteredClients} allClients={visibleClients} search={search} setSearch={setSearch} statusFilter={clientStatusFilter} setStatusFilter={setClientStatusFilter} permissions={permissions} onSelect={(c) => { setSelectedClient(c); setView("detail"); }} onNew={permissions.canCreateClient ? () => setShowNewClient(true) : null} />}
+            {view === "detail" && selectedClient && canViewClient(selectedClient.id) && (
               <DetailView
                 client={selectedClient}
                 eintraege={eintraege[selectedClient.id] || []}
                 onBack={() => setView("clients")}
-                canEdit={canEdit}
-                onNewEintrag={canEdit ? openNewEintrag : null}
+                canEdit={selectedClientCanEdit}
+                permissions={permissions}
+                onNewEintrag={selectedClientCanEdit ? openNewEintrag : null}
                 onExport={() => exportPDF(selectedClient, eintraege[selectedClient.id] || [])}
                 onKiBericht={() => setView("kibericht")}
-                notizen={notizen}
+                notizen={visibleNotizen}
                 deleteNotiz={deleteNotiz}
                 user={user}
                 users={users}
@@ -708,14 +793,15 @@ function AppContent() {
                 setEintraege={setEintraege}
               />
             )}
-            {view === "notizen" && <NotizenView notizen={notizen} onAdd={addNotiz} onUpdate={updateNotiz} onDelete={deleteNotiz} user={user} clients={clients} showToast={showToast} />}
-            {view === "kalender" && <KalenderView termine={termine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} clients={clients} user={user} showToast={showToast} />}
-            {view === "benachrichtigungen" && <BenachrichtigungenView termine={termine} clients={clients} setView={setView} setSelectedClient={setSelectedClient} />}
+            {view === "detail" && selectedClient && !canViewClient(selectedClient.id) && <AccessDeniedView setView={setView} />}
+            {view === "notizen" && <NotizenView notizen={visibleNotizen} onAdd={addNotiz} onUpdate={updateNotiz} onDelete={deleteNotiz} user={user} clients={visibleClients} showToast={showToast} />}
+            {view === "kalender" && <KalenderView termine={visibleTermine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} clients={visibleClients} user={user} showToast={showToast} />}
+            {view === "benachrichtigungen" && <BenachrichtigungenView termine={visibleTermine} clients={visibleClients} setView={setView} setSelectedClient={setSelectedClient} />}
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
-            {view === "stunden" && <StundenView clients={clients} eintraege={eintraege} />}
-            {view === "kibericht" && <KIBerichtView clients={clients} eintraege={eintraege} user={user} kiSettings={kiSettings} />}
-            {view === "nutzer" && isAdmin && <NutzerView users={users} onToggle={toggleNutzer} showToast={showToast} />}
-            {view === "einstellungen" && isAdmin && <KIEinstellungenView kiSettings={kiSettings} setKiSettings={setKiSettings} showToast={showToast} />}
+            {view === "stunden" && <StundenView clients={visibleClients} eintraege={eintraege} />}
+            {view === "kibericht" && <KIBerichtView clients={visibleClients} eintraege={eintraege} user={user} kiSettings={kiSettings} />}
+            {view === "nutzer" && permissions.canManageUsers && <NutzerView users={users} onToggle={toggleNutzer} showToast={showToast} />}
+            {view === "einstellungen" && permissions.canUseAdminSettings && <KIEinstellungenView kiSettings={kiSettings} setKiSettings={setKiSettings} showToast={showToast} />}
             {view === "dsgvo" && <DsgvoView />}
           </main>
         </div>
@@ -864,7 +950,7 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-function Sidebar({ view, setView, user, onLogout, isOpen, notifications, isAdmin }) {
+function Sidebar({ view, setView, user, onLogout, isOpen, notifications, permissions }) {
   const items = [
     { id: "dashboard", icon: "⊞", label: "Dashboard" },
     { id: "clients", icon: "🗂", label: "Fallakten" },
@@ -874,8 +960,8 @@ function Sidebar({ view, setView, user, onLogout, isOpen, notifications, isAdmin
     { id: "vorlagen", icon: "📋", label: "Vorlagen" },
     { id: "stunden", icon: "⏱", label: "Stunden & Berichte" },
     { id: "kibericht", icon: "🤖", label: "KI-Bericht" },
-    ...(isAdmin ? [{ id: "nutzer", icon: "👤", label: "Nutzerverwaltung" }] : []),
-    ...(isAdmin ? [{ id: "einstellungen", icon: "⚙️", label: "KI-Einstellungen" }] : []),
+    ...(permissions.canManageUsers ? [{ id: "nutzer", icon: "👤", label: "Nutzerverwaltung" }] : []),
+    ...(permissions.canUseAdminSettings ? [{ id: "einstellungen", icon: "⚙️", label: "KI-Einstellungen" }] : []),
     { id: "dsgvo", icon: "🔒", label: "Datenschutz" },
   ];
   return (
@@ -909,26 +995,27 @@ function Sidebar({ view, setView, user, onLogout, isOpen, notifications, isAdmin
   );
 }
 
-function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelectedClient, user }) {
+function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelectedClient, user, permissions }) {
   const myClients = clients.filter(c => (fallakten?.[c.id]?.intern || []).some(i => String(i.userId) === String(user?.id)));
-  const myClientIds = new Set(myClients.map(c => String(c.id)));
-  const total = myClients.length;
-  const offeneAufgaben = myClients.flatMap(c => (fallakten?.[c.id]?.aufgaben || []).map(a => ({ ...a, klientId: c.id, klientName: c.name }))).filter(a => a.status !== "erledigt");
+  const dashboardClients = permissions.canViewAllCases ? clients : myClients;
+  const dashboardClientIds = new Set(dashboardClients.map(c => String(c.id)));
+  const total = dashboardClients.length;
+  const offeneAufgaben = dashboardClients.flatMap(c => (fallakten?.[c.id]?.aufgaben || []).map(a => ({ ...a, klientId: c.id, klientName: c.name }))).filter(a => a.status !== "erledigt");
   const allEntries = Object.entries(eintraege)
-    .filter(([clientId]) => myClientIds.has(String(clientId)))
+    .filter(([clientId]) => dashboardClientIds.has(String(clientId)))
     .flatMap(([clientId, items]) => (items || []).map(item => ({ ...item, klientId: clientId })));
   const stunden = allEntries.filter(e => e.typ === "Stunden").reduce((s, e) => s + (e.stunden || 0), 0);
   const recent = [...allEntries].sort((a, b) => new Date(b.datum) - new Date(a.datum)).slice(0, 4);
   const getClientName = (id) => clients.find(c => c.id == id)?.name || "–";
   const getClientId = (entry) => entry.klientId || Object.entries(eintraege).find(([, v]) => v.some(e => e.id === entry.id))?.[0];
   const today = ds(new Date());
-  const nextTermine = [...termine].sort((a, b) => new Date(a.datum) - new Date(b.datum)).filter(t => t.datum >= today && (!t.klientId || myClientIds.has(String(t.klientId)))).slice(0, 3);
+  const nextTermine = [...termine].sort((a, b) => new Date(a.datum) - new Date(b.datum)).filter(t => t.datum >= today && (!t.klientId || dashboardClientIds.has(String(t.klientId)))).slice(0, 3);
   return (
     <div>
       <h1 style={pageTitle}>Dashboard</h1>
-      <p style={pageSubtitle}>Persönliche Arbeitsübersicht für {user?.name.split(" ")[0]}</p>
+      <p style={pageSubtitle}>{permissions.canViewAllCases ? `Rollenübersicht (${permissions.role})` : "Persönliche Arbeitsübersicht"} für {user?.name.split(" ")[0]}</p>
       <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 18, marginBottom: 28 }}>
-        {[{ label: "Meine Klienten", value: total, icon: "👥", color: "#1a4480" }, { label: "Offene Aufgaben", value: offeneAufgaben.length, icon: "☑", color: "#475569" }, { label: "Geleistete Stunden", value: stunden.toFixed(1) + " h", icon: "⏱", color: "#b45309" }].map(s => (
+        {[{ label: permissions.canViewAllCases ? "Sichtbare Fallakten" : "Meine Klienten", value: total, icon: "👥", color: "#1a4480" }, { label: "Offene Aufgaben", value: offeneAufgaben.length, icon: "☑", color: "#475569" }, { label: "Geleistete Stunden", value: stunden.toFixed(1) + " h", icon: "⏱", color: "#b45309" }].map(s => (
           <div key={s.label} style={{ background: "#fff", borderRadius: 14, padding: "20px 22px", boxShadow: "0 2px 12px rgba(0,0,0,.06)", display: "flex", alignItems: "center", gap: 14 }}>
             <div style={{ width: 46, height: 46, borderRadius: 12, background: s.color + "18", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>{s.icon}</div>
             <div><p style={{ margin: 0, fontSize: 24, fontWeight: 700, color: s.color, fontFamily: "'DM Serif Display',serif" }}>{s.value}</p><p style={{ margin: 0, fontSize: 12, color: "#64748b", marginTop: 2 }}>{s.label}</p></div>
@@ -937,9 +1024,9 @@ function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelecte
       </div>
       <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         <div style={card}>
-          <h2 style={cardTitle}>Meine Klienten</h2>
-          {myClients.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine interne Zuständigkeit hinterlegt.</p>}
-          {myClients.map(c => (
+          <h2 style={cardTitle}>{permissions.canViewAllCases ? "Sichtbare Fallakten" : "Meine Klienten"}</h2>
+          {dashboardClients.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine interne Zuständigkeit hinterlegt.</p>}
+          {dashboardClients.map(c => (
             <div key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "11px 0", borderBottom: "1px solid #f1f5f9" }}>
               <div style={{ minWidth: 0 }}>
                 <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</p>
@@ -996,7 +1083,7 @@ function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelecte
   );
 }
 
-function ClientsView({ clients, allClients, search, setSearch, statusFilter, setStatusFilter, onSelect, onNew }) {
+function ClientsView({ clients, allClients, search, setSearch, statusFilter, setStatusFilter, permissions, onSelect, onNew }) {
   const tabs = [
     { id: "alle", label: "Alle", count: allClients.length },
     { id: "aktiv", label: "Aktiv", count: allClients.filter(c => c.status === "aktiv").length },
@@ -1006,7 +1093,7 @@ function ClientsView({ clients, allClients, search, setSearch, statusFilter, set
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-        <div><h1 style={pageTitle}>Fallakten</h1><p style={pageSubtitle}>Gesamtbestand mit {allClients.length} Akten</p></div>
+        <div><h1 style={pageTitle}>Fallakten</h1><p style={pageSubtitle}>{permissions.canViewAllCases ? "Gesamtbestand" : "Zugeordnete Fallakten"} mit {allClients.length} Akten</p></div>
         {onNew && <button onClick={onNew} style={btnPrimary}>+ Klient anlegen</button>}
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
@@ -1042,6 +1129,16 @@ function ClientsView({ clients, allClients, search, setSearch, statusFilter, set
         </div>
         {clients.length === 0 && <p style={{ textAlign: "center", color: "#94a3b8", padding: 32 }}>Keine Klienten gefunden.</p>}
       </div>
+    </div>
+  );
+}
+
+function AccessDeniedView({ setView }) {
+  return (
+    <div style={card}>
+      <h1 style={cardTitle}>Kein Zugriff auf diese Fallakte</h1>
+      <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: 14 }}>Diese Fallakte ist deiner Rolle oder Zuständigkeit nicht zugeordnet.</p>
+      <button onClick={() => setView("clients")} style={btnSecondary}>Zur Fallaktenübersicht</button>
     </div>
   );
 }
@@ -1193,7 +1290,7 @@ function NoteRecord({ note }) {
   );
 }
 
-function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBericht, canEdit, notizen, user, users, showToast, fallakten, setFallakten, setEintraege }) {
+function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBericht, canEdit, permissions, notizen, user, users, showToast, fallakten, setFallakten, setEintraege }) {
   const [openMap, setOpenMap] = useState({ klient: false, aufgaben: false, intern: false, extern: false, ziele: false, dateien: false, soziales: false, gesundheit: false, bildungBeruf: false, finanzen: false, behoerden: false, freizeit: false, dokumentation: false, notizen: false });
   const [newDocs, setNewDocs] = useState({ soziales: { titel: "", text: "", datum: ds(new Date()) }, gesundheit: { titel: "", text: "", datum: ds(new Date()) }, bildungBeruf: { titel: "", text: "", datum: ds(new Date()) }, finanzen: { titel: "", text: "", datum: ds(new Date()) }, behoerden: { titel: "", text: "", datum: ds(new Date()) }, freizeit: { titel: "", text: "", datum: ds(new Date()) } });
   const [quickFields, setQuickFields] = useState({ aufgabe: "", aufgabeDatum: ds(new Date()), externName: "", externStelle: "", externTelefon: "", externEmail: "", ziel: "", zielDatum: ds(new Date()), dateiKategorie: "Dokument", dateiDatum: ds(new Date()) });
@@ -1204,6 +1301,10 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   const akte = fallakten?.[client.id] || createEmptyFallakte(client);
   const clientNotizen = (notizen || []).filter(n => n.klientId == client.id);
   const interneAuswahl = (users || []).filter(u => u.rolle === "Fachkraft" || u.rolle === "Leitung" || u.rolle === "Admin");
+  const canDeleteRecords = permissions?.canDeleteRecords;
+  const canDeleteFiles = permissions?.canDeleteFiles;
+  const canManageAssignments = permissions?.canManageAssignments;
+  const blockEdit = () => showToast("Du darfst diese Fallakte nicht bearbeiten.", "#c0392b");
 
   const patchAkte = (updater) => {
     setFallakten(prev => {
@@ -1214,6 +1315,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   };
 
   const updateKlient = async (key, value) => {
+    if (!canEdit) return blockEdit();
     patchAkte(cur => ({ ...cur, klient: { ...cur.klient, [key]: value } }));
     const dbPayload = {};
     if (key === "telefon") dbPayload.telefon = value;
@@ -1228,6 +1330,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   };
 
   const addSimpleItem = async (section, payload) => {
+    if (!canEdit) return blockEdit();
     if (section === "aufgaben") {
       const { data, error } = await supabase.from("aufgaben").insert([{
         klient_id: client.id,
@@ -1284,6 +1387,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   };
 
   const addFachDoc = async (bereich) => {
+    if (!canEdit) return blockEdit();
     const form = newDocs[bereich];
     if (!form.titel.trim() || !form.text.trim()) return showToast("Bitte Titel und Inhalt eingeben.", "#c0392b");
     const dbBereich = normalizeBereichKey(bereich);
@@ -1309,6 +1413,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   };
 
   const handleDateiUpload = async (event) => {
+    if (!canEdit) return blockEdit();
     const file = event.target.files?.[0];
     if (!file) return;
     const safeName = `${client.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
@@ -1383,6 +1488,8 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   };
 
   const removeItem = async (section, id) => {
+    if (!canDeleteRecords && section !== "dateien") return showToast("Nur Admins dürfen Einträge löschen.", "#c0392b");
+    if (section === "dateien" && !canDeleteFiles) return showToast("Nur Admins dürfen Dateien löschen.", "#c0392b");
     const tableMap = { aufgaben: "aufgaben", ziele: "ziele", extern: "zustaendigkeit_extern", intern: "zustaendigkeit_intern", dateien: "dateien" };
     const table = tableMap[section];
     if (!table) return;
@@ -1396,6 +1503,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   };
 
   const removeDoc = async (bereich, id) => {
+    if (!canDeleteRecords) return showToast("Nur Admins dürfen Dokumentationen löschen.", "#c0392b");
     const { error } = await supabase.from("dokumentationen").delete().eq("id", id);
     if (error) return showToast("Dokumentation konnte nicht gelöscht werden.", "#c0392b");
     patchAkte(cur => ({ ...cur, fachbereiche: { ...cur.fachbereiche, [bereich]: (cur.fachbereiche?.[bereich] || []).filter(x => x.id !== id) } }));
@@ -1461,6 +1569,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   };
 
   const updateDocumentation = async () => {
+    if (!canEdit) return blockEdit();
     if (!editingDoc?.titel.trim() || !editingDoc?.text.trim()) return showToast("Bitte Titel und Inhalt eingeben.", "#c0392b");
     if (editingDoc.sourceTable === "eintraege") {
       const { data, error } = await supabase.from("eintraege").update({
@@ -1498,6 +1607,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   };
 
   const deleteDocumentation = async (item) => {
+    if (!canDeleteRecords) return showToast("Nur Admins dürfen Dokumentationen löschen.", "#c0392b");
     const docId = item.docId || item.rawId;
     const table = item.sourceTable === "eintraege" ? "eintraege" : "dokumentationen";
     const { error } = await supabase.from(table).delete().eq("id", docId);
@@ -1574,78 +1684,78 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
         <AkteSection sectionKey="klient" title="Klient" open={openMap["klient"]} onToggle={toggleSection}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 }}>
             <FormField label="Geburtsdatum"><input value={formatDate(client.dob)} disabled style={{ ...inputStyle, background: "#f8fafc" }} /></FormField>
-            <FormField label="Telefon"><input value={akte.klient.telefon} onChange={e => updateKlient("telefon", e.target.value)} style={inputStyle} placeholder="Telefonnummer" /></FormField>
-            <FormField label="E-Mail"><input value={akte.klient.email} onChange={e => updateKlient("email", e.target.value)} style={inputStyle} placeholder="E-Mail" /></FormField>
-            <FormField label="Beginn Hilfe"><input type="date" value={akte.klient.beginnHilfe} onChange={e => updateKlient("beginnHilfe", e.target.value)} style={inputStyle} /></FormField>
-            <div style={{ gridColumn: "1 / -1" }}><FormField label="Adresse"><input value={akte.klient.adresse} onChange={e => updateKlient("adresse", e.target.value)} style={inputStyle} placeholder="Adresse" /></FormField></div>
-            <FormField label="Hilfeart"><input value={akte.klient.hilfeart} onChange={e => updateKlient("hilfeart", e.target.value)} style={inputStyle} placeholder="z. B. EB / SPFH" /></FormField>
-            <FormField label="Bezugspersonen"><input value={akte.klient.bezugspersonen} onChange={e => updateKlient("bezugspersonen", e.target.value)} style={inputStyle} placeholder="Familie, Schule, Bezugspersonen" /></FormField>
-            <div style={{ gridColumn: "1 / -1" }}><FormField label="Besondere Hinweise"><textarea rows={3} value={akte.klient.besondereHinweise} onChange={e => updateKlient("besondereHinweise", e.target.value)} style={{ ...inputStyle, resize: "vertical" }} placeholder="Wichtige allgemeine Hinweise zum Klienten" /></FormField></div>
+            <FormField label="Telefon"><input value={akte.klient.telefon} disabled={!canEdit} onChange={e => updateKlient("telefon", e.target.value)} style={{ ...inputStyle, background: canEdit ? "#fff" : "#f8fafc" }} placeholder="Telefonnummer" /></FormField>
+            <FormField label="E-Mail"><input value={akte.klient.email} disabled={!canEdit} onChange={e => updateKlient("email", e.target.value)} style={{ ...inputStyle, background: canEdit ? "#fff" : "#f8fafc" }} placeholder="E-Mail" /></FormField>
+            <FormField label="Beginn Hilfe"><input type="date" value={akte.klient.beginnHilfe} disabled={!canEdit} onChange={e => updateKlient("beginnHilfe", e.target.value)} style={{ ...inputStyle, background: canEdit ? "#fff" : "#f8fafc" }} /></FormField>
+            <div style={{ gridColumn: "1 / -1" }}><FormField label="Adresse"><input value={akte.klient.adresse} disabled={!canEdit} onChange={e => updateKlient("adresse", e.target.value)} style={{ ...inputStyle, background: canEdit ? "#fff" : "#f8fafc" }} placeholder="Adresse" /></FormField></div>
+            <FormField label="Hilfeart"><input value={akte.klient.hilfeart} disabled={!canEdit} onChange={e => updateKlient("hilfeart", e.target.value)} style={{ ...inputStyle, background: canEdit ? "#fff" : "#f8fafc" }} placeholder="z. B. EB / SPFH" /></FormField>
+            <FormField label="Bezugspersonen"><input value={akte.klient.bezugspersonen} disabled={!canEdit} onChange={e => updateKlient("bezugspersonen", e.target.value)} style={{ ...inputStyle, background: canEdit ? "#fff" : "#f8fafc" }} placeholder="Familie, Schule, Bezugspersonen" /></FormField>
+            <div style={{ gridColumn: "1 / -1" }}><FormField label="Besondere Hinweise"><textarea rows={3} value={akte.klient.besondereHinweise} disabled={!canEdit} onChange={e => updateKlient("besondereHinweise", e.target.value)} style={{ ...inputStyle, resize: "vertical", background: canEdit ? "#fff" : "#f8fafc" }} placeholder="Wichtige allgemeine Hinweise zum Klienten" /></FormField></div>
           </div>
         </AkteSection>
 
         <AkteSection sectionKey="aufgaben" title="Aufgaben" rightContent={<CountBadge>{akte.aufgaben?.length || 0}</CountBadge>} open={openMap["aufgaben"]} onToggle={toggleSection}>
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 8, marginBottom: 10 }}>
+          {canEdit && <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 8, marginBottom: 10 }}>
             <input value={quickFields.aufgabe} onChange={e => setQuickFields(p => ({ ...p, aufgabe: e.target.value }))} style={inputStyle} placeholder="Neue Aufgabe / Notiz" />
             <input type="date" value={quickFields.aufgabeDatum} onChange={e => setQuickFields(p => ({ ...p, aufgabeDatum: e.target.value }))} style={inputStyle} />
             <button onClick={() => { if (!quickFields.aufgabe.trim()) return; addSimpleItem("aufgaben", { titel: quickFields.aufgabe, status: "offen", notiz: "", datum: quickFields.aufgabeDatum || ds(new Date()) }); setQuickFields(p => ({ ...p, aufgabe: "", aufgabeDatum: ds(new Date()) })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Hinzufügen</button>
-          </div>
+          </div>}
           {(akte.aufgaben || []).length === 0 && <EmptyState>Noch keine Aufgaben erfasst.</EmptyState>}
-          {(akte.aufgaben || []).map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={() => removeItem("aufgaben", item.id)} />)}
+          {(akte.aufgaben || []).map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={canDeleteRecords ? () => removeItem("aufgaben", item.id) : null} />)}
         </AkteSection>
 
         <AkteSection sectionKey="extern" title="Zuständigkeit extern" open={openMap["extern"]} onToggle={toggleSection}>
-          <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 8, marginBottom: 8 }}>
+          {canEdit && <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 8, marginBottom: 8 }}>
             <input value={quickFields.externName} onChange={e => setQuickFields(p => ({ ...p, externName: e.target.value }))} style={inputStyle} placeholder="Name, z. B. Frau V." />
             <input value={quickFields.externStelle} onChange={e => setQuickFields(p => ({ ...p, externStelle: e.target.value }))} style={inputStyle} placeholder="Institution / Stelle" />
             <input value={quickFields.externTelefon} onChange={e => setQuickFields(p => ({ ...p, externTelefon: e.target.value }))} style={inputStyle} placeholder="Telefon" />
             <input value={quickFields.externEmail} onChange={e => setQuickFields(p => ({ ...p, externEmail: e.target.value }))} style={inputStyle} placeholder="E-Mail" />
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+          </div>}
+          {canEdit && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
             <button onClick={() => { if (!quickFields.externName.trim()) return; addSimpleItem("extern", { name: quickFields.externName, stelle: quickFields.externStelle, telefon: quickFields.externTelefon, email: quickFields.externEmail }); setQuickFields(p => ({ ...p, externName: "", externStelle: "", externTelefon: "", externEmail: "" })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Kontakt</button>
-          </div>
-          {(akte.extern || []).map(item => <CompactRecord key={item.id} title={item.name} status={item.status || "aktiv"} statusType="status" meta={`${item.stelle || "Externe Stelle"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} onDelete={() => removeItem("extern", item.id)} />)}
+          </div>}
+          {(akte.extern || []).map(item => <CompactRecord key={item.id} title={item.name} status={item.status || "aktiv"} statusType="status" meta={`${item.stelle || "Externe Stelle"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} onDelete={canDeleteRecords ? () => removeItem("extern", item.id) : null} />)}
           {(akte.extern || []).length === 0 && <EmptyState>Keine externen Zuständigkeiten hinterlegt.</EmptyState>}
         </AkteSection>
 
         <AkteSection sectionKey="intern" title="Zuständigkeit intern" open={openMap["intern"]} onToggle={toggleSection}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginBottom: 10 }}>
+          {canManageAssignments && <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, marginBottom: 10 }}>
             <select value={selectedInternUserId} onChange={e => setSelectedInternUserId(e.target.value)} style={inputStyle}>
               <option value="">Fachkraft auswählen …</option>
               {interneAuswahl.map(u => <option key={u.id} value={u.id}>{u.name} · {u.rolle}</option>)}
             </select>
             <button onClick={() => { const picked = interneAuswahl.find(u => String(u.id) === String(selectedInternUserId)); if (!picked) return showToast("Bitte eine Fachkraft auswählen.", "#c0392b"); addSimpleItem("intern", { userId: picked.id, name: picked.name, rolle: picked.rolle, telefon: "", email: picked.email }); setSelectedInternUserId(""); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Fachkraft</button>
-          </div>
-          {(akte.intern || []).map(item => <CompactRecord key={item.id} title={item.name} status={item.status || "aktiv"} statusType="status" meta={`${item.rolle || "Fachkraft"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} onDelete={() => removeItem("intern", item.id)} />)}
+          </div>}
+          {(akte.intern || []).map(item => <CompactRecord key={item.id} title={item.name} status={item.status || "aktiv"} statusType="status" meta={`${item.rolle || "Fachkraft"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} onDelete={canDeleteRecords ? () => removeItem("intern", item.id) : null} />)}
           {(akte.intern || []).length === 0 && <EmptyState>Keine internen Zuständigkeiten hinterlegt.</EmptyState>}
         </AkteSection>
 
         <AkteSection sectionKey="ziele" title="Ziele" open={openMap["ziele"]} onToggle={toggleSection}>
-          <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 8, marginBottom: 10 }}>
+          {canEdit && <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr auto", gap: 8, marginBottom: 10 }}>
             <input value={quickFields.ziel} onChange={e => setQuickFields(p => ({ ...p, ziel: e.target.value }))} style={inputStyle} placeholder="Neues Ziel" />
             <input type="date" value={quickFields.zielDatum} onChange={e => setQuickFields(p => ({ ...p, zielDatum: e.target.value }))} style={inputStyle} />
             <button onClick={() => { if (!quickFields.ziel.trim()) return; addSimpleItem("ziele", { titel: quickFields.ziel, status: "laufend", notiz: "", datum: quickFields.zielDatum || ds(new Date()) }); setQuickFields(p => ({ ...p, ziel: "", zielDatum: ds(new Date()) })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Ziel</button>
-          </div>
-          {(akte.ziele || []).map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={() => removeItem("ziele", item.id)} />)}
+          </div>}
+          {(akte.ziele || []).map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={canDeleteRecords ? () => removeItem("ziele", item.id) : null} />)}
           {(akte.ziele || []).length === 0 && <EmptyState>Noch keine Ziele erfasst.</EmptyState>}
         </AkteSection>
 
         <AkteSection sectionKey="dateien" title="Dateien" open={openMap["dateien"]} onToggle={toggleSection}>
           <input ref={fileInputRef} type="file" onChange={handleDateiUpload} style={{ display: "none" }} />
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, marginBottom: 10 }}>
+          {canEdit && <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, marginBottom: 10 }}>
             <select value={quickFields.dateiKategorie} onChange={e => setQuickFields(p => ({ ...p, dateiKategorie: e.target.value }))} style={inputStyle}>
               <option>Dokument</option><option>Bewerbung</option><option>Verfügung/Jugendamt</option><option>Schule</option><option>Medizin</option>
             </select>
             <input type="date" value={quickFields.dateiDatum} onChange={e => setQuickFields(p => ({ ...p, dateiDatum: e.target.value }))} style={inputStyle} />
             <button onClick={() => fileInputRef.current?.click()} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Datei hochladen</button>
-          </div>
-          {(akte.dateien || []).map(item => <div key={item.id} style={{ borderTop: "1px solid #f1f5f9", padding: "10px 0", display: "flex", justifyContent: "space-between", gap: 10 }}><div><button onClick={() => openStoredFile(item)} style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#0f172a", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", textAlign: "left" }}>{item.name}</button><p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{item.kategorie || "Dokument"} · {formatDate(item.datum)}{item.size ? ` · ${(item.size/1024).toFixed(1)} KB` : ""}</p></div><div style={{ display: "flex", gap: 8 }}><button onClick={() => openStoredFile(item)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>{isPdfFile(item) ? "Ansehen" : "Öffnen"}</button><button onClick={() => downloadStoredFile(item)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>Herunterladen</button><button onClick={() => removeItem("dateien", item.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>Entfernen</button></div></div>)}
+          </div>}
+          {(akte.dateien || []).map(item => <div key={item.id} style={{ borderTop: "1px solid #f1f5f9", padding: "10px 0", display: "flex", justifyContent: "space-between", gap: 10 }}><div><button onClick={() => openStoredFile(item)} style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#0f172a", background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", textAlign: "left" }}>{item.name}</button><p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{item.kategorie || "Dokument"} · {formatDate(item.datum)}{item.size ? ` · ${(item.size/1024).toFixed(1)} KB` : ""}</p></div><div style={{ display: "flex", gap: 8 }}><button onClick={() => openStoredFile(item)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>{isPdfFile(item) ? "Ansehen" : "Öffnen"}</button><button onClick={() => downloadStoredFile(item)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>Herunterladen</button>{canDeleteFiles && <button onClick={() => removeItem("dateien", item.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8" }}>Entfernen</button>}</div></div>)}
           {(akte.dateien || []).length === 0 && <p style={{ color: "#94a3b8", fontSize: 13 }}>Noch keine Dateien hinterlegt.</p>}
         </AkteSection>
 
         {Object.entries(FACHBEREICH_LABELS).map(([key, label]) => (
           <AkteSection key={key} sectionKey={key} title={label} color="#475569" rightContent={<CountBadge>{(akte.fachbereiche?.[key] || []).length}</CountBadge>} open={openMap[key]} onToggle={toggleSection}>
-            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 14, marginBottom: 12 }}>
+            {canEdit && <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: 14, marginBottom: 12 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
                 <input value={newDocs[key].titel} onChange={e => setNewDocs(prev => ({ ...prev, [key]: { ...prev[key], titel: e.target.value } }))} style={inputStyle} placeholder={`Titel für ${label}`} />
                 <input type="date" value={newDocs[key].datum} onChange={e => setNewDocs(prev => ({ ...prev, [key]: { ...prev[key], datum: e.target.value } }))} style={inputStyle} />
@@ -1654,9 +1764,9 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
                 <button onClick={() => addFachDoc(key)} style={{ ...btnPrimary, fontSize: 12 }}>+ Eintrag speichern</button>
               </div>
-            </div>
+            </div>}
             {(akte.fachbereiche?.[key] || []).length === 0 && <EmptyState>Noch keine Einträge in diesem Bereich.</EmptyState>}
-            {(akte.fachbereiche?.[key] || []).map(item => <CompactRecord key={item.id} title={item.titel} meta={`${formatDate(item.datum)}${item.autor ? ` · ${item.autor}` : ""}`} text={item.text} onDelete={() => removeDoc(key, item.id)} />)}
+            {(akte.fachbereiche?.[key] || []).map(item => <CompactRecord key={item.id} title={item.titel} meta={`${formatDate(item.datum)}${item.autor ? ` · ${item.autor}` : ""}`} text={item.text} onDelete={canDeleteRecords ? () => removeDoc(key, item.id) : null} />)}
           </AkteSection>
         ))}
 
@@ -1670,7 +1780,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
                   item={item}
                   canEdit={canEdit}
                   onEdit={() => setEditingDoc(docFormFromItem(item))}
-                  onDelete={() => deleteDocumentation(item)}
+                  onDelete={canDeleteRecords ? () => deleteDocumentation(item) : null}
                 />
               ))}
             </div>
