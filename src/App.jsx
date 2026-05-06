@@ -655,12 +655,6 @@ function AppContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, user]);
 
-  useEffect(() => {
-    if (!session || !user) return;
-    loadOutlookEvents(outlookRelevantOnly);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [outlookRelevantOnly]);
-
   useEffect(() => () => {
     dictationManuallyStoppedRef.current = true;
     if (speechRecognitionRef.current) speechRecognitionRef.current.stop();
@@ -1173,7 +1167,7 @@ function AppContent() {
             )}
             {view === "detail" && selectedClient && !canViewClient(selectedClient.id) && <AccessDeniedView setView={setView} />}
             {view === "notizen" && <NotizenView notizen={visibleNotizen} onAdd={addNotiz} onUpdate={updateNotiz} onDelete={deleteNotiz} user={user} clients={visibleClients} showToast={showToast} />}
-            {view === "kalender" && <KalenderView termine={visibleTermine} outlookConnection={outlookConnection} outlookEvents={outlookEvents} outlookEventsLoading={outlookEventsLoading} outlookEventsError={outlookEventsError} outlookRelevantOnly={outlookRelevantOnly} setOutlookRelevantOnly={setOutlookRelevantOnly} onLoadOutlookEvents={() => loadOutlookEvents(outlookRelevantOnly, false)} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} onConnectOutlook={startOutlookConnect} onRefreshOutlook={refreshOutlookStatus} onSyncOutlookTermin={syncOutlookTermin} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} />}
+            {view === "kalender" && <KalenderView termine={visibleTermine} outlookConnection={outlookConnection} outlookEvents={outlookEvents} outlookEventsLoading={outlookEventsLoading} outlookEventsError={outlookEventsError} outlookRelevantOnly={outlookRelevantOnly} setOutlookRelevantOnly={setOutlookRelevantOnly} onLoadOutlookEvents={(relevantOnly = outlookRelevantOnly) => loadOutlookEvents(relevantOnly, false)} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} onConnectOutlook={startOutlookConnect} onRefreshOutlook={refreshOutlookStatus} onSyncOutlookTermin={syncOutlookTermin} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} />}
             {view === "benachrichtigungen" && <BenachrichtigungenView termine={visibleTermine} clients={visibleClients} setView={setView} setSelectedClient={setSelectedClient} />}
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
             {view === "stunden" && <StundenView clients={visibleClients} eintraege={eintraege} />}
@@ -2438,7 +2432,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
   );
 }
 
-function KalenderView({ termine, outlookConnection, onAddTermin, onDeleteTermin, onUpdateTerminStatus, onConnectOutlook, onRefreshOutlook, onSyncOutlookTermin, canEditTermin, clients, user, showToast }) {
+function KalenderView({ termine, outlookConnection, outlookEvents, outlookEventsLoading, outlookEventsError, outlookRelevantOnly, setOutlookRelevantOnly, onLoadOutlookEvents, onAddTermin, onDeleteTermin, onUpdateTerminStatus, onConnectOutlook, onRefreshOutlook, onSyncOutlookTermin, canEditTermin, clients, user, showToast }) {
   const [showNew, setShowNew] = useState(false);
   const initialTerminForm = { titel: "", datum: ds(new Date()), uhrzeit: "09:00", klientId: "", fachkraft: user?.name || "", ort: "", notiz: "", erinnerung: false, outlookSync: false };
   const [form, setForm] = useState(initialTerminForm);
@@ -2562,6 +2556,47 @@ function KalenderView({ termine, outlookConnection, onAddTermin, onDeleteTermin,
           })}
         </div>
       )}
+      <div style={{ ...card, marginTop: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+          <div>
+            <IconHeading icon="termine">Outlook-Termine</IconHeading>
+            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>Lesend aus deinem verbundenen Outlook-Standardkalender, nicht lokal importiert.</p>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 7, color: "#475569", fontSize: 12, fontWeight: 700, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 999, padding: "6px 10px", cursor: "pointer" }}>
+              <input type="checkbox" checked={outlookRelevantOnly} onChange={e => { const checked = e.target.checked; setOutlookRelevantOnly(checked); onLoadOutlookEvents(checked); }} />
+              Nur relevante Begriffe
+            </label>
+            <button type="button" onClick={() => onLoadOutlookEvents(outlookRelevantOnly)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>{outlookEventsLoading ? "Lädt…" : "Outlook-Termine laden"}</button>
+          </div>
+        </div>
+        {!outlookConnection?.connected && <EmptyState>Verbinde zuerst dein Outlook-Konto, um Outlook-Termine hier zu sehen.</EmptyState>}
+        {outlookConnection?.connected && outlookEventsError && <p style={{ color: "#991b1b", fontSize: 13, margin: 0 }}>{outlookEventsError}</p>}
+        {outlookConnection?.connected && !outlookEventsError && outlookEventsLoading && <EmptyState>Outlook-Termine werden geladen…</EmptyState>}
+        {outlookConnection?.connected && !outlookEventsError && !outlookEventsLoading && outlookEvents.length === 0 && (
+          <EmptyState>{outlookRelevantOnly ? "Keine fachlich relevanten Outlook-Termine in den nächsten 60 Tagen gefunden." : "Keine Outlook-Termine in den nächsten 60 Tagen gefunden."}</EmptyState>
+        )}
+        {outlookConnection?.connected && !outlookEventsError && outlookEvents.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+            {outlookEvents.map(event => (
+              <div key={event.id} style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 12, padding: "12px 0", borderTop: "1px solid #f1f5f9" }}>
+                <div>
+                  <p style={{ margin: 0, color: "#1f2937", fontSize: 13, fontWeight: 800 }}>{formatDate(event.datum)}</p>
+                  <p style={{ margin: "3px 0 0", color: "#64748b", fontSize: 12 }}>{event.isAllDay ? "ganztägig" : `${event.uhrzeit || "–"}${event.ende ? `-${event.ende}` : ""}`}</p>
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <p style={{ ...recordTitleStyle, margin: 0 }}>{event.title}</p>
+                    <span style={{ ...statusChipStyle, background: "#eff6ff", borderColor: "#bfdbfe", color: "#1e3a8a" }}>Outlook-Termin</span>
+                  </div>
+                  {event.location && <p style={{ ...recordMetaStyle, marginTop: 4 }}>{event.location}</p>}
+                  {event.note && <p style={{ ...recordTextStyle, marginTop: 6 }}>{event.note.length > 180 ? `${event.note.slice(0, 180)}…` : event.note}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       {showNew && (
         <Modal onClose={() => setShowNew(false)}>
           <h2 style={modalTitleStyle}><SectionIcon name={SECTION_ICONS.termine} />Neuen Termin anlegen</h2>
