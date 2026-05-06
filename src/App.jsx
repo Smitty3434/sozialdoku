@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { addMonths, differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, isValid, parseISO, startOfDay, startOfMonth, subMonths } from "date-fns";
+import { addMonths, addYears, differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, isValid, parseISO, startOfDay, startOfMonth, subMonths } from "date-fns";
 import { de } from "date-fns/locale";
 import { ErrorBoundary } from "react-error-boundary";
 import { useForm } from "react-hook-form";
@@ -646,7 +646,7 @@ function AppContent() {
     setOutlookEventsLoading(true);
     setOutlookEventsError("");
     const { data, error } = await supabase.functions.invoke("outlook-list-events", {
-      body: { relevantOnly, days: 60 },
+      body: { relevantOnly, days: 365 },
     });
     setOutlookEventsLoading(false);
     if (error || data?.error) {
@@ -2536,12 +2536,24 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   const importFileRef = useRef(null);
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const today = ds(new Date());
-  const sorted = [...termine].sort((a, b) => new Date(`${a.datum}T${a.uhrzeit || "00:00"}`) - new Date(`${b.datum}T${b.uhrzeit || "00:00"}`));
+  const calendarEnd = ds(addYears(new Date(), 1));
+  const isInCalendarRange = (item) => item?.datum >= today && item?.datum <= calendarEnd;
+  const isQuietCalendarItem = (item) => {
+    const haystack = `${item?.titel || item?.title || ""} ${item?.notiz || item?.note || ""} ${item?.import_source || ""} ${item?.source || ""}`.toLowerCase();
+    return haystack.includes("ferien") || haystack.includes("feiertag") || haystack.includes("holiday");
+  };
+  const visibleCalendarTermine = termine.filter(isInCalendarRange);
+  const visibleOutlookEvents = (outlookEvents || []).filter(isInCalendarRange);
+  const sorted = [...visibleCalendarTermine].sort((a, b) => new Date(`${a.datum}T${a.uhrzeit || "00:00"}`) - new Date(`${b.datum}T${b.uhrzeit || "00:00"}`));
   const upcomingTermine = sorted.filter(t => t.datum >= today && t.status !== "erledigt" && t.status !== "abgesagt");
   const archivedTermine = sorted.filter(t => t.datum < today || t.status === "erledigt" || t.status === "abgesagt");
   const getKlient = (id) => clients.find(c => c.id == id);
   const monthStart = startOfMonth(monthCursor);
   const monthEnd = endOfMonth(monthCursor);
+  const minMonthStart = startOfMonth(new Date());
+  const maxMonthStart = startOfMonth(addYears(new Date(), 1));
+  const isAtMinMonth = monthStart <= minMonthStart;
+  const isAtMaxMonth = monthStart >= maxMonthStart;
   const monthLeadingDays = (monthStart.getDay() + 6) % 7;
   const monthGridStart = new Date(monthStart);
   monthGridStart.setDate(monthGridStart.getDate() - monthLeadingDays);
@@ -2549,14 +2561,18 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   monthGridEnd.setDate(monthGridEnd.getDate() + ((7 - ((monthLeadingDays + monthEnd.getDate()) % 7)) % 7));
   const monthDays = eachDayOfInterval({ start: monthGridStart, end: monthGridEnd });
   const monthEvents = [
-    ...termine.map(t => ({ id: `app-${t.id}`, source: "app", datum: t.datum, uhrzeit: t.uhrzeit || "", titel: t.titel, ort: t.ort, status: t.status || "geplant", klientId: t.klientId, raw: t })),
-    ...(outlookEvents || []).map(event => ({ id: `outlook-${event.id}`, source: "outlook", datum: event.datum, uhrzeit: event.uhrzeit || "", titel: event.title, ort: event.location, status: "outlook", raw: event })),
+    ...visibleCalendarTermine.map(t => ({ id: `app-${t.id}`, source: "app", quiet: isQuietCalendarItem(t), datum: t.datum, uhrzeit: t.uhrzeit || "", titel: t.titel, ort: t.ort, status: t.status || "geplant", klientId: t.klientId, raw: t })),
+    ...visibleOutlookEvents.map(event => ({ id: `outlook-${event.id}`, source: "outlook", quiet: isQuietCalendarItem(event), datum: event.datum, uhrzeit: event.uhrzeit || "", titel: event.title, ort: event.location, status: "outlook", raw: event })),
   ].filter(event => event.datum);
   const monthEventsByDate = monthEvents.reduce((acc, event) => {
     acc[event.datum] = [...(acc[event.datum] || []), event];
     return acc;
   }, {});
-  const selectedDayEvents = [...(monthEventsByDate[selectedMonthDate] || [])].sort((a, b) => (a.uhrzeit || "00:00").localeCompare(b.uhrzeit || "00:00"));
+  const sortCalendarEvents = (items) => [...items].sort((a, b) => {
+    if (a.quiet !== b.quiet) return a.quiet ? 1 : -1;
+    return (a.uhrzeit || "00:00").localeCompare(b.uhrzeit || "00:00");
+  });
+  const selectedDayEvents = sortCalendarEvents(monthEventsByDate[selectedMonthDate] || []);
   const viewButtonStyle = (active) => ({
     border: "none",
     background: active ? "#1e3a5f" : "transparent",
@@ -2580,10 +2596,12 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
     setImportError("");
     try {
       const text = await file.text();
-      const parsed = markDuplicates(parseIcsCalendar(text));
+      const parsedAll = parseIcsCalendar(text);
+      const parsed = markDuplicates(parsedAll.filter(isInCalendarRange));
       setImportPreview(parsed);
       setSelectedImportIds(parsed.filter(item => !item.duplicate).map(item => item.importId));
       if (!parsed.length) setImportError("In der ICS-Datei wurden keine importierbaren Termine gefunden.");
+      if (parsed.length < parsedAll.length) setImportError(`${parsedAll.length - parsed.length} Termine außerhalb des Kalenderzeitraums (${formatDate(today)} bis ${formatDate(calendarEnd)}) wurden ausgeblendet.`);
     } catch (error) {
       setImportPreview([]);
       setSelectedImportIds([]);
@@ -2628,7 +2646,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-        <div><IconHeading icon="termine" level="h1" style={pageTitle}>Kalender & Termine</IconHeading><p style={pageSubtitle}>{upcomingTermine.length} anstehende Termine · {archivedTermine.length} vergangen / erledigt ausgeblendet</p>{outlookStatusLine}</div>
+        <div><IconHeading icon="termine" level="h1" style={pageTitle}>Kalender & Termine</IconHeading><p style={pageSubtitle}>{upcomingTermine.length} anstehende Termine · Zeitraum {formatDate(today)} bis {formatDate(calendarEnd)}</p>{outlookStatusLine}</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <div style={{ display: "inline-flex", overflow: "hidden", border: "1px solid #dbe3ea", borderRadius: 999, background: "#fff" }}>
             <button type="button" onClick={() => setCalendarMode("liste")} style={viewButtonStyle(calendarMode === "liste")}>Liste</button>
@@ -2721,24 +2739,26 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
               <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>{monthEvents.filter(event => event.datum >= ds(monthStart) && event.datum <= ds(monthEnd)).length} sichtbare Termine in diesem Monat</p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-              <button type="button" onClick={() => setMonthCursor(prev => subMonths(prev, 1))} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>Zurück</button>
+              <button type="button" disabled={isAtMinMonth} onClick={() => setMonthCursor(prev => subMonths(prev, 1))} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px", opacity: isAtMinMonth ? .45 : 1, cursor: isAtMinMonth ? "not-allowed" : "pointer" }}>Zurück</button>
               <span style={{ minWidth: 132, textAlign: "center", color: "#1f2937", fontWeight: 800, fontSize: 14 }}>{format(monthCursor, "MMMM yyyy", { locale: de })}</span>
-              <button type="button" onClick={() => setMonthCursor(prev => addMonths(prev, 1))} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>Weiter</button>
+              <button type="button" disabled={isAtMaxMonth} onClick={() => setMonthCursor(prev => addMonths(prev, 1))} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px", opacity: isAtMaxMonth ? .45 : 1, cursor: isAtMaxMonth ? "not-allowed" : "pointer" }}>Weiter</button>
               <button type="button" onClick={() => { setMonthCursor(startOfMonth(new Date())); setSelectedMonthDate(today); }} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>Heute</button>
             </div>
           </div>
-          <div className="calendar-month-grid calendar-weekdays" style={{ marginBottom: 8 }}>
+          <div className="calendar-month-grid calendar-weekdays" style={{ marginBottom: 8, padding: "0 2px" }}>
             {["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].map(day => (
-              <div key={day} style={{ color: "#64748b", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".04em", padding: "0 6px" }}>{day}</div>
+              <div key={day} style={{ color: "#64748b", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".04em", padding: "0 8px" }}>{day}</div>
             ))}
           </div>
-          <div className="calendar-month-grid">
+          <div className="calendar-month-grid" style={{ background: "#dbe3ea", border: "1px solid #dbe3ea", borderRadius: 14, padding: 1, gap: 1, overflow: "hidden" }}>
             {monthDays.map(day => {
               const key = ds(day);
-              const dayEvents = [...(monthEventsByDate[key] || [])].sort((a, b) => (a.uhrzeit || "00:00").localeCompare(b.uhrzeit || "00:00"));
+              const dayEvents = sortCalendarEvents(monthEventsByDate[key] || []);
               const inCurrentMonth = day >= monthStart && day <= monthEnd;
               const isToday = key === today;
               const isSelected = key === selectedMonthDate;
+              const realEventCount = dayEvents.filter(event => !event.quiet).length;
+              const dayBackground = realEventCount >= 4 ? "#eef2f7" : realEventCount >= 2 ? "#f5f7fa" : "#fff";
               return (
                 <button
                   key={key}
@@ -2746,25 +2766,25 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
                   onClick={() => setSelectedMonthDate(key)}
                   className="calendar-day-cell"
                   style={{
-                    minHeight: 118,
-                    border: isSelected ? "1px solid #1e3a5f" : "1px solid #e2e8f0",
-                    borderRadius: 8,
-                    background: isSelected ? "#f8fafc" : "#fff",
+                    minHeight: 138,
+                    border: isSelected ? "1px solid #1e3a5f" : "1px solid transparent",
+                    borderRadius: 10,
+                    background: isSelected ? "#f8fafc" : dayBackground,
                     opacity: inCurrentMonth ? 1 : .42,
-                    padding: 10,
+                    padding: 11,
                     textAlign: "left",
                     cursor: "pointer",
                     fontFamily: "'DM Sans',sans-serif",
-                    boxShadow: isSelected ? "0 0 0 3px rgba(30,58,95,.08)" : "none",
+                    boxShadow: isSelected ? "inset 0 0 0 1px rgba(30,58,95,.18)" : "none",
                   }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 7 }}>
-                    <span className="calendar-day-title" style={{ color: isToday ? "#1e3a5f" : "#334155", fontSize: 13, fontWeight: isToday ? 900 : 800 }}>{format(day, "d")}</span>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 9 }}>
+                    <span className="calendar-day-title" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 999, background: isToday ? "#1e3a5f" : "transparent", color: isToday ? "#fff" : "#334155", fontSize: 13, fontWeight: isToday ? 900 : 800 }}>{format(day, "d")}</span>
                     {dayEvents.length > 0 && <span style={{ background: isToday ? "#e0f2fe" : "#f1f5f9", border: "1px solid #dbe3ea", borderRadius: 999, color: isToday ? "#075985" : "#475569", fontSize: 10, fontWeight: 900, padding: "1px 6px" }}>{dayEvents.length}</span>}
                   </div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {dayEvents.slice(0, 3).map(event => (
-                      <div key={event.id} className="calendar-day-event" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderLeft: `3px solid ${event.source === "outlook" ? "#3b82f6" : "#64748b"}`, paddingLeft: 6, color: "#334155", fontSize: 11, fontWeight: 700 }}>
+                      <div key={event.id} className="calendar-day-event" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderLeft: `3px solid ${event.quiet ? "#cbd5e1" : event.source === "outlook" ? "#3b82f6" : "#64748b"}`, background: event.quiet ? "rgba(248,250,252,.72)" : "rgba(255,255,255,.78)", borderRadius: 6, padding: "3px 6px", color: event.quiet ? "#94a3b8" : "#334155", fontSize: 11, fontWeight: event.quiet ? 650 : 800 }}>
                         {event.uhrzeit && <span style={{ color: "#64748b", fontWeight: 800 }}>{event.uhrzeit} </span>}{event.titel}
                       </div>
                     ))}
@@ -2790,7 +2810,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
                       <div style={{ minWidth: 0 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                           <p style={{ ...recordTitleStyle, margin: 0 }}>{event.titel}</p>
-                          <span style={{ ...statusChipStyle, background: event.source === "outlook" ? "#eff6ff" : "#f8fafc", borderColor: event.source === "outlook" ? "#bfdbfe" : "#cbd5e1", color: event.source === "outlook" ? "#1e3a8a" : "#475569" }}>{event.source === "outlook" ? "Outlook" : event.status}</span>
+                          <span style={{ ...statusChipStyle, background: event.quiet ? "#f8fafc" : event.source === "outlook" ? "#eff6ff" : "#f8fafc", borderColor: event.quiet ? "#e2e8f0" : event.source === "outlook" ? "#bfdbfe" : "#cbd5e1", color: event.quiet ? "#94a3b8" : event.source === "outlook" ? "#1e3a8a" : "#475569" }}>{event.quiet ? "Ferien / Feiertag" : event.source === "outlook" ? "Outlook" : event.status}</span>
                         </div>
                         {(event.ort || k) && <p style={{ ...recordMetaStyle, marginTop: 4 }}>{[event.ort, k?.name].filter(Boolean).join(" · ")}</p>}
                       </div>
@@ -2842,12 +2862,12 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
         {!outlookConnection?.connected && <EmptyState>Verbinde zuerst dein Outlook-Konto, um Outlook-Termine hier zu sehen.</EmptyState>}
         {outlookConnection?.connected && outlookEventsError && <p style={{ color: "#991b1b", fontSize: 13, margin: 0 }}>{outlookEventsError}</p>}
         {outlookConnection?.connected && !outlookEventsError && outlookEventsLoading && <EmptyState>Outlook-Termine werden geladen…</EmptyState>}
-        {outlookConnection?.connected && !outlookEventsError && !outlookEventsLoading && outlookEvents.length === 0 && (
-          <EmptyState>{outlookRelevantOnly ? "Keine fachlich relevanten Outlook-Termine in den nächsten 60 Tagen gefunden." : "Keine Outlook-Termine in den nächsten 60 Tagen gefunden."}</EmptyState>
+        {outlookConnection?.connected && !outlookEventsError && !outlookEventsLoading && visibleOutlookEvents.length === 0 && (
+          <EmptyState>{outlookRelevantOnly ? "Keine fachlich relevanten Outlook-Termine im Kalenderzeitraum gefunden." : "Keine Outlook-Termine im Kalenderzeitraum gefunden."}</EmptyState>
         )}
-        {outlookConnection?.connected && !outlookEventsError && outlookEvents.length > 0 && (
+        {outlookConnection?.connected && !outlookEventsError && visibleOutlookEvents.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-            {outlookEvents.map(event => (
+            {visibleOutlookEvents.map(event => (
               <div key={event.id} style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 12, padding: "12px 0", borderTop: "1px solid #f1f5f9" }}>
                 <div>
                   <p style={{ margin: 0, color: "#1f2937", fontSize: 13, fontWeight: 800 }}>{formatDate(event.datum)}</p>
