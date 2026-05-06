@@ -215,6 +215,13 @@ export default function App() {
         text: d.inhalt,
         fachkraft: d.erstellt_von_name || "",
         stunden: null,
+        sourceTable: "dokumentationen",
+        bereich: d.bereich || "allgemein",
+        kontaktart: d.kontaktart || "",
+        hashtags: d.hashtags || [],
+        nachgetragen: Boolean(d.nachgetragen),
+        created_at: d.created_at,
+        updated_at: d.updated_at,
       });
 
       if (d.bereich !== "allgemein" && byClient[d.klient_id]) {
@@ -227,6 +234,12 @@ export default function App() {
             text: d.inhalt,
             datum: d.datum,
             autor: d.erstellt_von_name || "",
+            bereich: d.bereich || "allgemein",
+            kontaktart: d.kontaktart || "",
+            hashtags: d.hashtags || [],
+            nachgetragen: Boolean(d.nachgetragen),
+            created_at: d.created_at,
+            updated_at: d.updated_at,
           },
           ...(byClient[d.klient_id].fachbereiche[key] || []),
         ];
@@ -377,7 +390,7 @@ export default function App() {
       created_by: session.user.id,
     }]).select().single();
     if (data) {
-      const newE = { ...data, typ: data.typ === "Massnahme" ? "Maßnahme" : data.typ };
+      const newE = { ...data, typ: data.typ === "Massnahme" ? "Maßnahme" : data.typ, sourceTable: "eintraege", bereich: "allgemein", kontaktart: data.typ };
       setEintraege(prev => ({ ...prev, [klientId]: [newE, ...(prev[klientId] || [])] }));
       showToast("Eintrag gespeichert ✓");
     }
@@ -630,6 +643,7 @@ export default function App() {
                 showToast={showToast}
                 fallakten={fallakten}
                 setFallakten={setFallakten}
+                setEintraege={setEintraege}
               />
             )}
             {view === "notizen" && <NotizenView notizen={notizen} onAdd={addNotiz} onUpdate={updateNotiz} onDelete={deleteNotiz} user={user} clients={clients} showToast={showToast} />}
@@ -1050,7 +1064,7 @@ function CompactRecord({ title, meta, text, onDelete, status, statusType }) {
   );
 }
 
-function ChronoRecord({ item }) {
+function ChronoRecord({ item, onEdit, onDelete, canEdit }) {
   return (
     <div style={chronoRecordStyle}>
       <div className="chrono-grid" style={chronoHeaderGridStyle}>
@@ -1070,9 +1084,23 @@ function ChronoRecord({ item }) {
           <span style={chronoLabelStyle}>Titel</span>
           <p style={recordTitleStyle}>{item.titel}</p>
           {item.autor && <p style={recordMetaStyle}>{item.autor}</p>}
+          {item.updated_at && <p style={recordMetaStyle}>Zuletzt geändert {formatDate(item.updated_at)}</p>}
         </div>
       </div>
       <p style={{ ...recordTextStyle, marginTop: 10 }}>{item.text}</p>
+      {(item.nachgetragen || item.hashtags?.length > 0) && (
+        <p style={{ ...recordMetaStyle, marginTop: 8 }}>
+          {item.nachgetragen ? "Nachgetragen" : ""}
+          {item.nachgetragen && item.hashtags?.length > 0 ? " · " : ""}
+          {item.hashtags?.map(tag => `#${tag}`).join(" ")}
+        </p>
+      )}
+      {canEdit && (
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          <button type="button" onClick={onEdit} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>Bearbeiten</button>
+          {onDelete && <button type="button" onClick={onDelete} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px", color: "#991b1b" }}>Löschen</button>}
+        </div>
+      )}
     </div>
   );
 }
@@ -1090,12 +1118,13 @@ function NoteRecord({ note }) {
   );
 }
 
-function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBericht, canEdit, notizen, user, users, showToast, fallakten, setFallakten }) {
+function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBericht, canEdit, notizen, user, users, showToast, fallakten, setFallakten, setEintraege }) {
   const [openMap, setOpenMap] = useState({ klient: false, aufgaben: false, intern: false, extern: false, ziele: false, dateien: false, soziales: false, gesundheit: false, bildungBeruf: false, finanzen: false, behoerden: false, freizeit: false, dokumentation: false, notizen: false });
   const [newDocs, setNewDocs] = useState({ soziales: { titel: "", text: "", datum: ds(new Date()) }, gesundheit: { titel: "", text: "", datum: ds(new Date()) }, bildungBeruf: { titel: "", text: "", datum: ds(new Date()) }, finanzen: { titel: "", text: "", datum: ds(new Date()) }, behoerden: { titel: "", text: "", datum: ds(new Date()) }, freizeit: { titel: "", text: "", datum: ds(new Date()) } });
   const [quickFields, setQuickFields] = useState({ aufgabe: "", aufgabeDatum: ds(new Date()), externName: "", externStelle: "", externTelefon: "", externEmail: "", ziel: "", zielDatum: ds(new Date()), dateiKategorie: "Dokument", dateiDatum: ds(new Date()) });
   const [selectedInternUserId, setSelectedInternUserId] = useState("");
   const [pdfPreview, setPdfPreview] = useState(null);
+  const [editingDoc, setEditingDoc] = useState(null);
   const fileInputRef = useRef(null);
   const akte = fallakten?.[client.id] || createEmptyFallakte(client);
   const clientNotizen = (notizen || []).filter(n => n.klientId == client.id);
@@ -1297,20 +1326,155 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
     patchAkte(cur => ({ ...cur, fachbereiche: { ...cur.fachbereiche, [bereich]: (cur.fachbereiche?.[bereich] || []).filter(x => x.id !== id) } }));
   };
 
+  const docFormFromItem = (item) => ({
+    id: item.docId || item.rawId || item.id,
+    sourceTable: item.sourceTable || "dokumentationen",
+    bereich: item.bereich || "allgemein",
+    kontaktart: item.kontaktart || "",
+    datum: item.datum || ds(new Date()),
+    titel: item.titel || "",
+    text: item.text || "",
+    hashtags: Array.isArray(item.hashtags) ? item.hashtags.join(", ") : (item.hashtags || ""),
+    nachgetragen: Boolean(item.nachgetragen),
+  });
+
+  const applyDocumentationUpdate = (data) => {
+    const dbBereich = data.bereich || "allgemein";
+    const fachKey = denormalizeBereichKey(dbBereich);
+    const updatedEntry = {
+      id: data.id,
+      datum: data.datum,
+      typ: dbBereich === "allgemein" ? (data.kontaktart || "Fallverlauf") : fachbereichLabel(dbBereich),
+      titel: data.titel,
+      text: data.inhalt,
+      fachkraft: data.erstellt_von_name || user?.name || "",
+      stunden: null,
+      sourceTable: "dokumentationen",
+      bereich: dbBereich,
+      kontaktart: data.kontaktart || "",
+      hashtags: data.hashtags || [],
+      nachgetragen: Boolean(data.nachgetragen),
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+    };
+    setEintraege(prev => ({
+      ...prev,
+      [client.id]: (prev[client.id] || []).map(e => String(e.id) === String(data.id) ? updatedEntry : e),
+    }));
+    patchAkte(cur => {
+      const fachbereiche = Object.fromEntries(Object.entries(cur.fachbereiche || {}).map(([key, items]) => [
+        key,
+        (items || []).filter(item => String(item.id) !== String(data.id)),
+      ]));
+      if (dbBereich !== "allgemein") {
+        fachbereiche[fachKey] = [{
+          id: data.id,
+          titel: data.titel,
+          text: data.inhalt,
+          datum: data.datum,
+          autor: data.erstellt_von_name || user?.name || "",
+          bereich: dbBereich,
+          kontaktart: data.kontaktart || "",
+          hashtags: data.hashtags || [],
+          nachgetragen: Boolean(data.nachgetragen),
+          created_at: data.created_at,
+          updated_at: data.updated_at,
+        }, ...(fachbereiche[fachKey] || [])];
+      }
+      return { ...cur, fachbereiche };
+    });
+  };
+
+  const updateDocumentation = async () => {
+    if (!editingDoc?.titel.trim() || !editingDoc?.text.trim()) return showToast("Bitte Titel und Inhalt eingeben.", "#c0392b");
+    if (editingDoc.sourceTable === "eintraege") {
+      const { data, error } = await supabase.from("eintraege").update({
+        datum: editingDoc.datum || ds(new Date()),
+        typ: editingDoc.kontaktart === "Maßnahme" ? "Massnahme" : (editingDoc.kontaktart || "Fallverlauf"),
+        titel: editingDoc.titel,
+        text: editingDoc.text,
+      }).eq("id", editingDoc.id).select().single();
+      if (error) return showToast(`Eintrag konnte nicht aktualisiert werden: ${error.message}`, "#c0392b");
+      const mapped = { ...data, typ: data.typ === "Massnahme" ? "Maßnahme" : data.typ, sourceTable: "eintraege", bereich: "allgemein", kontaktart: data.typ };
+      setEintraege(prev => ({
+        ...prev,
+        [client.id]: (prev[client.id] || []).map(e => String(e.id) === String(data.id) ? mapped : e),
+      }));
+      setEditingDoc(null);
+      showToast("Dokumentation aktualisiert ✓");
+      return;
+    }
+    const tags = editingDoc.hashtags.split(",").map(tag => tag.trim()).filter(Boolean);
+    const payload = {
+      bereich: editingDoc.bereich,
+      kontaktart: editingDoc.kontaktart,
+      datum: editingDoc.datum || ds(new Date()),
+      titel: editingDoc.titel,
+      inhalt: editingDoc.text,
+      hashtags: tags,
+      nachgetragen: editingDoc.nachgetragen,
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase.from("dokumentationen").update(payload).eq("id", editingDoc.id).select().single();
+    if (error) return showToast(`Dokumentation konnte nicht aktualisiert werden: ${error.message}`, "#c0392b");
+    applyDocumentationUpdate(data);
+    setEditingDoc(null);
+    showToast("Dokumentation aktualisiert ✓");
+  };
+
+  const deleteDocumentation = async (item) => {
+    const docId = item.docId || item.rawId;
+    const table = item.sourceTable === "eintraege" ? "eintraege" : "dokumentationen";
+    const { error } = await supabase.from(table).delete().eq("id", docId);
+    if (error) return showToast("Dokumentation konnte nicht gelöscht werden.", "#c0392b");
+    setEintraege(prev => ({ ...prev, [client.id]: (prev[client.id] || []).filter(e => String(e.id) !== String(docId)) }));
+    patchAkte(cur => ({
+      ...cur,
+      fachbereiche: Object.fromEntries(Object.entries(cur.fachbereiche || {}).map(([key, items]) => [
+        key,
+        (items || []).filter(doc => String(doc.id) !== String(docId)),
+      ])),
+    }));
+    showToast("Dokumentation gelöscht", "#64748b");
+  };
+
   const toggleSection = (key) => setOpenMap(prev => ({ ...prev, [key]: !prev[key] }));
 
   const chronoDokumentation = [
     ...Object.entries(akte.fachbereiche || {}).flatMap(([bereich, items]) => (items || []).map(item => ({
       id: `${bereich}-${item.id}`,
+      docId: item.id,
+      sourceTable: "dokumentationen",
+      bereich: item.bereich || normalizeBereichKey(bereich),
       datum: item.datum,
       titel: item.titel,
       text: item.text,
       autor: item.autor,
       quelle: fachbereichLabel(bereich),
-      kontaktart: "Fachbereich",
+      kontaktart: item.kontaktart || "Fachbereich",
+      hashtags: item.hashtags || [],
+      nachgetragen: Boolean(item.nachgetragen),
+      created_at: item.created_at,
+      updated_at: item.updated_at,
       farbe: fachbereichFarbe(bereich),
     }))),
-    ...eintraege.map(e => ({ id: `eintrag-${e.id}`, datum: e.datum, titel: e.titel, text: e.text, autor: e.fachkraft, quelle: "Dokumentation", kontaktart: e.typ, farbe: typeColor(e.typ) })),
+    ...eintraege.map(e => ({
+      id: `eintrag-${e.id}`,
+      docId: e.id,
+      sourceTable: e.sourceTable || "dokumentationen",
+      bereich: e.bereich || "allgemein",
+      datum: e.datum,
+      titel: e.titel,
+      text: e.text,
+      autor: e.fachkraft,
+      quelle: e.bereich && e.bereich !== "allgemein" ? fachbereichLabel(e.bereich) : "Dokumentation",
+      kontaktart: e.kontaktart || e.typ,
+      hashtags: e.hashtags || [],
+      nachgetragen: Boolean(e.nachgetragen),
+      created_at: e.created_at,
+      updated_at: e.updated_at,
+      farbe: typeColor(e.typ),
+    })),
   ].sort((a, b) => new Date(b.datum) - new Date(a.datum));
 
   return (
@@ -1425,7 +1589,15 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
           <AkteSection sectionKey="dokumentation" title="Dokumentation" color="#475569" rightContent={<CountBadge>{chronoDokumentation.length}</CountBadge>} open={openMap["dokumentation"]} onToggle={toggleSection}>
             {chronoDokumentation.length === 0 && <EmptyState>Noch keine Dokumentation vorhanden.</EmptyState>}
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {chronoDokumentation.map(item => <ChronoRecord key={item.id} item={item} />)}
+              {chronoDokumentation.map(item => (
+                <ChronoRecord
+                  key={item.id}
+                  item={item}
+                  canEdit={canEdit}
+                  onEdit={() => setEditingDoc(docFormFromItem(item))}
+                  onDelete={() => deleteDocumentation(item)}
+                />
+              ))}
             </div>
           </AkteSection>
         </div>
@@ -1436,6 +1608,45 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
           </AkteSection>
         </div>
       </div>
+      {editingDoc && (
+        <Modal onClose={() => setEditingDoc(null)} maxWidth={720}>
+          <h2 style={{ fontFamily: "'DM Serif Display',serif", fontSize: 22, marginBottom: 4 }}>Dokumentation bearbeiten</h2>
+          <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>{client.name}</p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 }}>
+            <FormField label="Bereich">
+              <select value={editingDoc.bereich} onChange={e => setEditingDoc(prev => ({ ...prev, bereich: e.target.value }))} style={inputStyle}>
+                <option value="allgemein">Allgemein / Fallverlauf</option>
+                {Object.entries(FACHBEREICH_LABELS).map(([key, label]) => <option key={key} value={normalizeBereichKey(key)}>{label}</option>)}
+              </select>
+            </FormField>
+            <FormField label="Kontaktart">
+              <input value={editingDoc.kontaktart} onChange={e => setEditingDoc(prev => ({ ...prev, kontaktart: e.target.value }))} style={inputStyle} placeholder="z. B. Gespräch, Telefonat, Fallverlauf" />
+            </FormField>
+            <FormField label="Datum">
+              <input type="date" value={editingDoc.datum} onChange={e => setEditingDoc(prev => ({ ...prev, datum: e.target.value }))} style={inputStyle} />
+            </FormField>
+            <FormField label="Nachgetragen">
+              <label style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 40, fontSize: 13, color: "#334155" }}>
+                <input type="checkbox" checked={editingDoc.nachgetragen} onChange={e => setEditingDoc(prev => ({ ...prev, nachgetragen: e.target.checked }))} />
+                Eintrag wurde nachgetragen
+              </label>
+            </FormField>
+          </div>
+          <FormField label="Titel">
+            <input value={editingDoc.titel} onChange={e => setEditingDoc(prev => ({ ...prev, titel: e.target.value }))} style={inputStyle} placeholder="Kurztitel" />
+          </FormField>
+          <FormField label="Text / Inhalt">
+            <textarea rows={6} value={editingDoc.text} onChange={e => setEditingDoc(prev => ({ ...prev, text: e.target.value }))} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6 }} placeholder="Dokumentationsinhalt" />
+          </FormField>
+          <FormField label="Hashtags">
+            <input value={editingDoc.hashtags} onChange={e => setEditingDoc(prev => ({ ...prev, hashtags: e.target.value }))} style={inputStyle} placeholder="schule, hilfeplan, termin" />
+          </FormField>
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 18, flexWrap: "wrap" }}>
+            <button onClick={() => setEditingDoc(null)} style={btnSecondary}>Abbrechen</button>
+            <button onClick={updateDocumentation} style={btnPrimary}>Änderungen speichern</button>
+          </div>
+        </Modal>
+      )}
       {pdfPreview && <PdfPreviewModal file={pdfPreview} onClose={() => setPdfPreview(null)} />}
     </div>
   );
