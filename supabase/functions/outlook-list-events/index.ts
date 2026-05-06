@@ -145,6 +145,7 @@ function mapEvent(event: Record<string, Record<string, string> | string | boolea
     id: String(event.id || ""),
     title: String(event.subject || "Outlook-Termin"),
     datum: startDate.slice(0, 10),
+    end_datum: endDate.slice(0, 10),
     uhrzeit: startDate.slice(11, 16),
     ende: endDate.slice(11, 16),
     location: String(location.displayName || ""),

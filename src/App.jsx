@@ -136,6 +136,28 @@ const formatDate = (d) => {
   const parsed = parseAppDate(d);
   return parsed ? format(parsed, "dd.MM.yyyy", { locale: de }) : "–";
 };
+const normalizeLooseDate = (value = "") => {
+  const iso = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return value;
+  const german = String(value).match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (!german) return "";
+  return `${german[3]}-${german[2].padStart(2, "0")}-${german[1].padStart(2, "0")}`;
+};
+const inferTerminEndDate = (item) => {
+  const text = `${item?.titel || item?.title || ""} ${item?.notiz || item?.note || ""}`.trim();
+  const isoRange = text.match(/(\d{4}-\d{2}-\d{2})\s*(?:-|–|bis)\s*(\d{4}-\d{2}-\d{2})/i);
+  if (isoRange) return isoRange[2];
+  const germanRange = text.match(/(\d{1,2}\.\d{1,2}\.\d{4})\s*(?:-|–|bis)\s*(\d{1,2}\.\d{1,2}\.\d{4})/i);
+  if (germanRange) return normalizeLooseDate(germanRange[2]);
+  return "";
+};
+const getTerminEndDate = (item) => item?.endDatum || item?.end_datum || item?.datum_bis || item?.endDate || item?.end_date || inferTerminEndDate(item);
+const formatTerminDateRange = (item) => {
+  const start = item?.datum;
+  const end = getTerminEndDate(item);
+  if (!start || !end || start === end) return formatDate(start);
+  return `${formatDate(start)} - ${formatDate(end)}`;
+};
 const formatDateTime = (d) => {
   const parsed = parseAppDate(d);
   return parsed ? format(parsed, "dd.MM.yyyy HH:mm", { locale: de }) : "–";
@@ -144,7 +166,7 @@ const typeColor = () => "#475569";
 const typBg = () => "#f1f5f9";
 const rolleStyle = (r) => ROLLEN_FARBEN[r] || { bg: "#f1f5f9", color: "#475569" };
 const normalizeRole = (role) => ROLLEN.includes(role) ? role : "Fachkraft";
-const mapTermin = (t) => ({ ...t, klientId: t.klient_id, erinnerung: Boolean(t.erinnerung), status: t.status || "geplant" });
+const mapTermin = (t) => ({ ...t, klientId: t.klient_id, endDatum: getTerminEndDate(t), erinnerung: Boolean(t.erinnerung), status: t.status || "geplant" });
 const terminImportKey = (t) => `${String(t.titel || t.title || "").trim().toLowerCase()}|${t.datum || ""}|${(t.uhrzeit || "").slice(0, 5)}`;
 const resolveUserName = (id, users = [], currentUser = null, fallback = "Unbekannt") => {
   if (!id) return fallback;
@@ -179,6 +201,16 @@ const parseIcsDateValue = (value = "") => {
     : new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss));
   return isValid(parsed) ? { datum: ds(parsed), uhrzeit: format(parsed, "HH:mm"), allDay: false } : { datum: "", uhrzeit: "", allDay: false };
 };
+const parseIcsEndDateValue = (value = "", allDay = false) => {
+  const parsed = parseIcsDateValue(value);
+  if (!parsed.datum) return "";
+  if (allDay && parsed.uhrzeit === "") {
+    const inclusiveEnd = new Date(`${parsed.datum}T00:00:00`);
+    inclusiveEnd.setDate(inclusiveEnd.getDate() - 1);
+    return ds(inclusiveEnd);
+  }
+  return parsed.datum;
+};
 const parseIcsCalendar = (text) => {
   const lines = unfoldIcsLines(text);
   const events = [];
@@ -204,6 +236,7 @@ const parseIcsCalendar = (text) => {
     if (prop === "LOCATION") current.ort = unescapeIcsText(value);
     if (prop === "DESCRIPTION") current.notiz = unescapeIcsText(value);
     if (prop === "DTSTART") Object.assign(current, parseIcsDateValue(value));
+    if (prop === "DTEND") current.end_datum = parseIcsEndDateValue(value, current.allDay);
   });
   return events;
 };
@@ -264,7 +297,7 @@ const printFallakte = ({ client, akte, dokumentation, notizen, termine, user }) 
     ${section("Zuständigkeit intern", printList(akte.intern, item => `<div class="record"><h3>${escapeHtml(item.name)}</h3><p class="meta">${printValue(item.rolle)}${item.email ? ` · ${escapeHtml(item.email)}` : ""}${item.telefon ? ` · ${escapeHtml(item.telefon)}` : ""}</p></div>`, "Keine internen Zuständigkeiten hinterlegt."))}
     ${section("Zuständigkeit extern", printList(akte.extern, item => `<div class="record"><h3>${escapeHtml(item.name || item.stelle)}</h3><p class="meta">${printValue(item.stelle)}${item.rolle ? ` · ${escapeHtml(item.rolle)}` : ""}${item.email ? ` · ${escapeHtml(item.email)}` : ""}${item.telefon ? ` · ${escapeHtml(item.telefon)}` : ""}</p></div>`, "Keine externen Zuständigkeiten hinterlegt."))}
     ${section("Dokumentation / Fallverlauf", printList(dokumentation, item => `<div class="record"><h3>${escapeHtml(item.titel)}</h3><p class="meta">${formatDate(item.datum)} · ${printValue(item.quelle)} · ${printValue(item.kontaktart)}${item.autor ? ` · ${escapeHtml(item.autor)}` : ""}</p><p>${escapeHtml(item.text)}</p></div>`, "Keine Dokumentation vorhanden."))}
-    ${section("Termine", printList(termine, item => `<div class="record"><h3>${escapeHtml(item.titel)} <span class="status">${printValue(item.status)}</span></h3><p class="meta">${formatDate(item.datum)} ${escapeHtml(item.uhrzeit || "")}${item.ort ? ` · ${escapeHtml(item.ort)}` : ""}</p>${item.notiz ? `<p>${escapeHtml(item.notiz)}</p>` : ""}</div>`, "Keine Termine vorhanden."))}
+    ${section("Termine", printList(termine, item => `<div class="record"><h3>${escapeHtml(item.titel)} <span class="status">${printValue(item.status)}</span></h3><p class="meta">${formatTerminDateRange(item)} ${escapeHtml(item.uhrzeit || "")}${item.ort ? ` · ${escapeHtml(item.ort)}` : ""}</p>${item.notiz ? `<p>${escapeHtml(item.notiz)}</p>` : ""}</div>`, "Keine Termine vorhanden."))}
     ${section("Notizen zum Klienten", printList(notizen, item => `<div class="record"><h3>${escapeHtml(item.titel)}</h3><p class="meta">${printValue(item.autor)}${item.created_at ? ` · ${formatDate(item.created_at)}` : ""}</p>${item.text ? `<p>${escapeHtml(item.text)}</p>` : ""}</div>`, "Keine Notizen zum Klienten vorhanden."))}
     ${section("Dateien", printList(akte.dateien, item => `<div class="record"><h3>${escapeHtml(item.name)}</h3><p class="meta">${printValue(item.kategorie)} · ${formatDate(item.datum)}${item.size ? ` · ${(item.size / 1024).toFixed(1)} KB` : ""}</p></div>`, "Keine Dateien hinterlegt."))}
     <p class="footer">SozialDoku · Druckansicht enthält nur Inhalte, die in der aktuellen Sitzung sichtbar sind.</p>
@@ -938,6 +971,7 @@ function AppContent() {
       .map(item => ({
         titel: item.titel,
         datum: item.datum,
+        end_datum: getTerminEndDate(item) || null,
         uhrzeit: item.uhrzeit || null,
         klient_id: null,
         fachkraft: user?.name || "",
@@ -2530,6 +2564,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   const [importError, setImportError] = useState("");
   const [importing, setImporting] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [showAllTermine, setShowAllTermine] = useState(false);
   const [calendarMode, setCalendarMode] = useState("liste");
   const [monthCursor, setMonthCursor] = useState(startOfMonth(new Date()));
   const [selectedMonthDate, setSelectedMonthDate] = useState(ds(new Date()));
@@ -2537,7 +2572,11 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const today = ds(new Date());
   const calendarEnd = ds(addYears(new Date(), 1));
-  const isInCalendarRange = (item) => item?.datum >= today && item?.datum <= calendarEnd;
+  const isInCalendarRange = (item) => {
+    if (!item?.datum) return false;
+    const end = getTerminEndDate(item) || item.datum;
+    return end >= today && item.datum <= calendarEnd;
+  };
   const isQuietCalendarItem = (item) => {
     const haystack = `${item?.titel || item?.title || ""} ${item?.notiz || item?.note || ""} ${item?.import_source || ""} ${item?.source || ""}`.toLowerCase();
     return haystack.includes("ferien") || haystack.includes("feiertag") || haystack.includes("holiday");
@@ -2545,8 +2584,9 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   const visibleCalendarTermine = termine.filter(isInCalendarRange);
   const visibleOutlookEvents = (outlookEvents || []).filter(isInCalendarRange);
   const sorted = [...visibleCalendarTermine].sort((a, b) => new Date(`${a.datum}T${a.uhrzeit || "00:00"}`) - new Date(`${b.datum}T${b.uhrzeit || "00:00"}`));
-  const upcomingTermine = sorted.filter(t => t.datum >= today && t.status !== "erledigt" && t.status !== "abgesagt");
-  const archivedTermine = sorted.filter(t => t.datum < today || t.status === "erledigt" || t.status === "abgesagt");
+  const allVisibleTermineSorted = [...termine].sort((a, b) => new Date(`${a.datum}T${a.uhrzeit || "00:00"}`) - new Date(`${b.datum}T${b.uhrzeit || "00:00"}`));
+  const upcomingTermine = sorted.filter(t => (getTerminEndDate(t) || t.datum) >= today && t.status !== "erledigt" && t.status !== "abgesagt");
+  const archivedTermine = sorted.filter(t => (getTerminEndDate(t) || t.datum) < today || t.status === "erledigt" || t.status === "abgesagt");
   const getKlient = (id) => clients.find(c => c.id == id);
   const monthStart = startOfMonth(monthCursor);
   const monthEnd = endOfMonth(monthCursor);
@@ -2560,12 +2600,23 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   const monthGridEnd = new Date(monthEnd);
   monthGridEnd.setDate(monthGridEnd.getDate() + ((7 - ((monthLeadingDays + monthEnd.getDate()) % 7)) % 7));
   const monthDays = eachDayOfInterval({ start: monthGridStart, end: monthGridEnd });
-  const monthEvents = [
-    ...visibleCalendarTermine.map(t => ({ id: `app-${t.id}`, source: "app", quiet: isQuietCalendarItem(t), datum: t.datum, uhrzeit: t.uhrzeit || "", titel: t.titel, ort: t.ort, status: t.status || "geplant", klientId: t.klientId, raw: t })),
-    ...visibleOutlookEvents.map(event => ({ id: `outlook-${event.id}`, source: "outlook", quiet: isQuietCalendarItem(event), datum: event.datum, uhrzeit: event.uhrzeit || "", titel: event.title, ort: event.location, status: "outlook", raw: event })),
+  const baseMonthEvents = [
+    ...visibleCalendarTermine.map(t => ({ id: `app-${t.id}`, source: "app", quiet: isQuietCalendarItem(t), datum: t.datum, endDatum: getTerminEndDate(t), uhrzeit: t.uhrzeit || "", titel: t.titel, ort: t.ort, status: t.status || "geplant", klientId: t.klientId, raw: t })),
+    ...visibleOutlookEvents.map(event => ({ id: `outlook-${event.id}`, source: "outlook", quiet: isQuietCalendarItem(event), datum: event.datum, endDatum: getTerminEndDate(event), uhrzeit: event.uhrzeit || "", titel: event.title, ort: event.location, status: "outlook", raw: event })),
   ].filter(event => event.datum);
+  const expandCalendarEvent = (event) => {
+    const start = parseAppDate(event.datum);
+    const end = parseAppDate(getTerminEndDate(event));
+    if (!start || !end || end <= start) return [{ ...event, calendarDate: event.datum }];
+    return eachDayOfInterval({ start, end }).map(day => {
+      const key = ds(day);
+      return { ...event, id: `${event.id}-${key}`, calendarDate: key };
+    });
+  };
+  const monthEvents = baseMonthEvents.flatMap(expandCalendarEvent);
   const monthEventsByDate = monthEvents.reduce((acc, event) => {
-    acc[event.datum] = [...(acc[event.datum] || []), event];
+    const key = event.calendarDate || event.datum;
+    acc[key] = [...(acc[key] || []), event];
     return acc;
   }, {});
   const sortCalendarEvents = (items) => [...items].sort((a, b) => {
@@ -2679,7 +2730,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
                       {isToday && <span style={{ background: "#dbeafe", color: "#1d4ed8", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10 }}>Heute</span>}
                     </div>
                   </div>
-                  <p style={{ margin: "3px 0", fontSize: 12, color: "#64748b" }}>🕐 {t.uhrzeit} · 📍 {t.ort}</p>
+                  <p style={{ margin: "3px 0", fontSize: 12, color: "#64748b" }}>{formatTerminDateRange(t)} · {t.uhrzeit || "ganztägig"}{t.ort ? ` · ${t.ort}` : ""}</p>
                   {k && <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}>👤 {k.name}</p>}
                   {t.erinnerung && <span style={{ fontSize: 11, color: "#f59e0b" }}>🔔 Erinnerung aktiv</span>}
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
@@ -2713,7 +2764,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
                 <label key={item.importId} style={{ display: "grid", gridTemplateColumns: "auto 110px 1fr", gap: 12, alignItems: "flex-start", padding: "10px 0", borderTop: "1px solid #f1f5f9", opacity: item.duplicate ? .6 : 1 }}>
                   <input type="checkbox" checked={selectedImportIds.includes(item.importId)} disabled={item.duplicate} onChange={e => setSelectedImportIds(prev => e.target.checked ? [...prev, item.importId] : prev.filter(id => id !== item.importId))} style={{ marginTop: 3 }} />
                   <div>
-                    <p style={{ margin: 0, color: "#1f2937", fontSize: 13, fontWeight: 800 }}>{formatDate(item.datum)}</p>
+                    <p style={{ margin: 0, color: "#1f2937", fontSize: 13, fontWeight: 800 }}>{formatTerminDateRange(item)}</p>
                     <p style={{ margin: "3px 0 0", color: "#64748b", fontSize: 12 }}>{item.allDay ? "ganztägig" : item.uhrzeit || "–"}</p>
                   </div>
                   <div style={{ minWidth: 0 }}>
@@ -2736,7 +2787,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
             <div>
               <IconHeading icon="termine">Monatsansicht</IconHeading>
-              <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>{monthEvents.filter(event => event.datum >= ds(monthStart) && event.datum <= ds(monthEnd)).length} sichtbare Termine in diesem Monat</p>
+              <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>{baseMonthEvents.filter(event => event.datum <= ds(monthEnd) && (getTerminEndDate(event) || event.datum) >= ds(monthStart)).length} sichtbare Termine in diesem Monat</p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <button type="button" disabled={isAtMinMonth} onClick={() => setMonthCursor(prev => subMonths(prev, 1))} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px", opacity: isAtMinMonth ? .45 : 1, cursor: isAtMinMonth ? "not-allowed" : "pointer" }}>Zurück</button>
@@ -2812,7 +2863,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
                           <p style={{ ...recordTitleStyle, margin: 0 }}>{event.titel}</p>
                           <span style={{ ...statusChipStyle, background: event.quiet ? "#f8fafc" : event.source === "outlook" ? "#eff6ff" : "#f8fafc", borderColor: event.quiet ? "#e2e8f0" : event.source === "outlook" ? "#bfdbfe" : "#cbd5e1", color: event.quiet ? "#94a3b8" : event.source === "outlook" ? "#1e3a8a" : "#475569" }}>{event.quiet ? "Ferien / Feiertag" : event.source === "outlook" ? "Outlook" : event.status}</span>
                         </div>
-                        {(event.ort || k) && <p style={{ ...recordMetaStyle, marginTop: 4 }}>{[event.ort, k?.name].filter(Boolean).join(" · ")}</p>}
+                        <p style={{ ...recordMetaStyle, marginTop: 4 }}>{[formatTerminDateRange(event), event.ort, k?.name].filter(Boolean).join(" · ")}</p>
                       </div>
                     </div>
                   );
@@ -2832,7 +2883,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
               <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "11px 0", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap" }}>
                 <div style={{ minWidth: 0 }}>
                   <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#1e293b" }}>{t.titel}</p>
-                  <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{formatDate(t.datum)} {t.uhrzeit}{k ? ` · ${k.name}` : ""}{t.ort ? ` · ${t.ort}` : ""}</p>
+                  <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{formatTerminDateRange(t)} {t.uhrzeit || ""}{k ? ` · ${k.name}` : ""}{t.ort ? ` · ${t.ort}` : ""}</p>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
                     <OutlookSyncBadge termin={t} />
                     {canEditTermin?.(t) && t.outlook_sync_status !== "synced" && <button type="button" onClick={() => onSyncOutlookTermin?.(t.id)} style={{ ...btnSecondary, fontSize: 11, padding: "3px 8px" }}>Outlook synchronisieren</button>}
@@ -2870,7 +2921,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
             {visibleOutlookEvents.map(event => (
               <div key={event.id} style={{ display: "grid", gridTemplateColumns: "110px 1fr", gap: 12, padding: "12px 0", borderTop: "1px solid #f1f5f9" }}>
                 <div>
-                  <p style={{ margin: 0, color: "#1f2937", fontSize: 13, fontWeight: 800 }}>{formatDate(event.datum)}</p>
+                  <p style={{ margin: 0, color: "#1f2937", fontSize: 13, fontWeight: 800 }}>{formatTerminDateRange(event)}</p>
                   <p style={{ margin: "3px 0 0", color: "#64748b", fontSize: 12 }}>{event.isAllDay ? "ganztägig" : `${event.uhrzeit || "–"}${event.ende ? `-${event.ende}` : ""}`}</p>
                 </div>
                 <div style={{ minWidth: 0 }}>
@@ -2886,6 +2937,42 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
           </div>
         )}
       </div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
+        <button type="button" onClick={() => setShowAllTermine(true)} style={{ ...btnSecondary, padding: "9px 14px" }}>Alle Termine</button>
+      </div>
+      {showAllTermine && (
+        <Modal onClose={() => setShowAllTermine(false)} maxWidth={860}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+            <div>
+              <h2 style={{ ...modalTitleStyle, marginBottom: 4 }}><SectionIcon name={SECTION_ICONS.termine} />Alle Termine</h2>
+              <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>Vollansicht aller für dich sichtbaren Termine inklusive vergangen, erledigt und abgesagt.</p>
+            </div>
+            <button type="button" onClick={() => setShowAllTermine(false)} style={btnPrimary}>Schließen</button>
+          </div>
+          {allVisibleTermineSorted.length === 0 && <EmptyState>Keine sichtbaren Termine vorhanden.</EmptyState>}
+          {allVisibleTermineSorted.length > 0 && (
+            <div style={{ maxHeight: "68vh", overflowY: "auto", borderTop: "1px solid #e2e8f0" }}>
+              {allVisibleTermineSorted.map(t => {
+                const k = getKlient(t.klientId);
+                return (
+                  <div key={t.id} className="all-termine-row" style={{ display: "grid", gridTemplateColumns: "150px 1fr auto", gap: 14, alignItems: "start", padding: "12px 0", borderBottom: "1px solid #f1f5f9" }}>
+                    <div>
+                      <p style={{ margin: 0, color: "#1f2937", fontSize: 13, fontWeight: 900 }}>{formatTerminDateRange(t)}</p>
+                      <p style={{ margin: "3px 0 0", color: "#64748b", fontSize: 12 }}>{t.uhrzeit || "ganztägig"}</p>
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ ...recordTitleStyle, margin: 0 }}>{t.titel}</p>
+                      <p style={{ ...recordMetaStyle, marginTop: 4 }}>{[t.ort, k?.name].filter(Boolean).join(" · ") || "Allgemeiner Termin"}</p>
+                      {t.notiz && <p style={{ ...recordTextStyle, marginTop: 5 }}>{t.notiz.length > 180 ? `${t.notiz.slice(0, 180)}…` : t.notiz}</p>}
+                    </div>
+                    <StatusControl termin={t} />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Modal>
+      )}
       {showNew && (
         <Modal onClose={() => setShowNew(false)}>
           <h2 style={modalTitleStyle}><SectionIcon name={SECTION_ICONS.termine} />Neuen Termin anlegen</h2>
@@ -2946,7 +3033,7 @@ function BenachrichtigungenView({ termine, clients, setView, setSelectedClient }
         <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 14, padding: "16px 20px", marginBottom: 20 }}>
           <p style={{ margin: "0 0 12px", fontWeight: 700, color: "#dc2626", fontSize: 15 }}>⚠️ {overdue.length} überfällige Termine</p>
           {overdue.map(t => <div key={t.id} style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderTop: "1px solid #fecaca" }}>
-            <div><p style={{ margin: 0, fontWeight: 600, fontSize: 13 }}>{t.titel}</p><p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>{formatDate(t.datum)} · {t.uhrzeit}</p></div>
+            <div><p style={{ margin: 0, fontWeight: 600, fontSize: 13 }}>{t.titel}</p><p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>{formatTerminDateRange(t)} · {t.uhrzeit || "ganztägig"}</p></div>
             <span style={{ background: "#fee2e2", color: "#dc2626", fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20, alignSelf: "flex-start" }}>Überfällig</span>
           </div>)}
         </div>
@@ -2959,7 +3046,7 @@ function BenachrichtigungenView({ termine, clients, setView, setSelectedClient }
             return <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 0", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap", gap: 8 }}>
               <div>
                 <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: "#1e293b" }}>{t.titel}</p>
-                <p style={{ margin: "3px 0", fontSize: 12, color: "#64748b" }}>{formatDate(t.datum)} · {t.uhrzeit} · {t.ort}</p>
+                <p style={{ margin: "3px 0", fontSize: 12, color: "#64748b" }}>{formatTerminDateRange(t)} · {t.uhrzeit || "ganztägig"} · {t.ort}</p>
                 {k && <button onClick={() => { setSelectedClient(k); setView("detail"); }} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "#1a4480", padding: 0, fontFamily: "'DM Sans',sans-serif", fontWeight: 600 }}>👤 {k.name} →</button>}
               </div>
               <DiffBadge diff={t.diff} />
@@ -2978,7 +3065,7 @@ function BenachrichtigungenView({ termine, clients, setView, setSelectedClient }
                 <p style={{ margin: 0, fontWeight: 600, fontSize: 14, color: "#1e293b" }}>{t.titel}</p>
                 {t.erinnerung && <span style={{ fontSize: 12 }}>🔔</span>}
               </div>
-              <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>{formatDate(t.datum)} · {t.uhrzeit} · {t.ort} {k ? `· ${k.name}` : ""}</p>
+              <p style={{ margin: 0, fontSize: 12, color: "#64748b" }}>{formatTerminDateRange(t)} · {t.uhrzeit || "ganztägig"} · {t.ort} {k ? `· ${k.name}` : ""}</p>
             </div>
             <DiffBadge diff={t.diff} />
           </div>;
@@ -3965,6 +4052,7 @@ const globalStyles = `
     .calendar-month-grid { gap: 4px !important; }
     .calendar-day-cell { min-height: 86px !important; padding: 7px !important; }
     .calendar-day-event { display: none !important; }
+    .all-termine-row { grid-template-columns: 1fr !important; gap: 6px !important; }
     h1 { line-height: 1.12; }
     input, select, textarea, button { max-width: 100%; }
     .main-content { padding: 18px 12px 88px; }
