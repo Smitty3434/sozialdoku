@@ -189,6 +189,7 @@ function AppContent() {
   const [clients, setClients] = useState([]);
   const [eintraege, setEintraege] = useState({});
   const [fallakten, setFallakten] = useState({});
+  const [fallaktenFreigaben, setFallaktenFreigaben] = useState([]);
   const [users, setUsers] = useState([]);
   const [termine, setTermine] = useState([]);
   const [notizen, setNotizen] = useState([]);
@@ -220,8 +221,14 @@ function AppContent() {
   const assignedClientIds = new Set(Object.entries(fallakten || {})
     .filter(([, akte]) => (akte.intern || []).some(i => String(i.userId) === String(user?.id)))
     .map(([id]) => String(id)));
-  const canViewClient = (clientId) => isAdmin || isLeitung || assignedClientIds.has(String(clientId));
-  const canEditClientContent = (clientId) => isAdmin || isLeitung || (isFachkraft && assignedClientIds.has(String(clientId)));
+  const grantedViewClientIds = new Set(fallaktenFreigaben
+    .filter(f => String(f.nutzer_id) === String(user?.id) && (f.darf_ansehen || f.darf_bearbeiten))
+    .map(f => String(f.klient_id)));
+  const grantedEditClientIds = new Set(fallaktenFreigaben
+    .filter(f => String(f.nutzer_id) === String(user?.id) && f.darf_bearbeiten)
+    .map(f => String(f.klient_id)));
+  const canViewClient = (clientId) => isAdmin || isLeitung || assignedClientIds.has(String(clientId)) || grantedViewClientIds.has(String(clientId));
+  const canEditClientContent = (clientId) => isAdmin || isLeitung || (isFachkraft && (assignedClientIds.has(String(clientId)) || grantedEditClientIds.has(String(clientId))));
   const visibleClients = clients.filter(c => canViewClient(c.id));
   const visibleClientIds = new Set(visibleClients.map(c => String(c.id)));
   const visibleTermine = termine.filter(t => !t.klientId || visibleClientIds.has(String(t.klientId)));
@@ -250,15 +257,20 @@ function AppContent() {
 
   const loadAssignedClientIds = async () => {
     if (role !== "Fachkraft") return null;
-    const { data, error } = await supabase
-      .from("zustaendigkeit_intern")
-      .select("klient_id")
-      .eq("nutzer_id", user?.id);
-    if (error) {
+    const [assignmentsRes, grantsRes] = await Promise.all([
+      supabase.from("zustaendigkeit_intern").select("klient_id").eq("nutzer_id", user?.id),
+      supabase.from("fallakten_freigaben").select("klient_id,darf_ansehen,darf_bearbeiten").eq("nutzer_id", user?.id),
+    ]);
+    if (assignmentsRes.error) {
       showToast("Zuständigkeiten konnten nicht geladen werden.", "#c0392b");
       return [];
     }
-    return [...new Set((data || []).map(a => a.klient_id).filter(Boolean))];
+    const assigned = (assignmentsRes.data || []).map(a => a.klient_id).filter(Boolean);
+    const granted = grantsRes.error ? [] : (grantsRes.data || [])
+      .filter(f => f.darf_ansehen || f.darf_bearbeiten)
+      .map(f => f.klient_id)
+      .filter(Boolean);
+    return [...new Set([...assigned, ...granted])];
   };
 
   const loadClients = async () => {
@@ -427,6 +439,11 @@ function AppContent() {
     if (data) setUsers(data);
   };
 
+  const loadFreigaben = async () => {
+    const { data, error } = await supabase.from("fallakten_freigaben").select("*");
+    if (!error) setFallaktenFreigaben(data || []);
+  };
+
   const loadTermine = async () => {
     let query = supabase.from("termine").select("*").order("datum", { ascending: true }).order("uhrzeit", { ascending: true });
     if (role === "Fachkraft") {
@@ -477,6 +494,7 @@ function AppContent() {
       await Promise.all([
         loadClients(),
         (isAdmin || isLeitung) ? loadUsers() : Promise.resolve(setUsers([])),
+        loadFreigaben(),
         loadTermine(),
         loadNotizen()
       ]);
@@ -705,6 +723,58 @@ function AppContent() {
     showToast(aktiv ? "Nutzer aktiviert ✓" : "Nutzer deaktiviert", aktiv ? "#16825a" : "#c0392b");
   };
 
+  const createSecureUser = async (form) => {
+    if (!permissions.canManageUsers) return deny("Nur Admins dürfen Benutzer anlegen.");
+    const { data, error } = await supabase.functions.invoke("admin-create-user", {
+      body: {
+        name: form.name,
+        email: form.email,
+        password: form.password,
+        rolle: form.rolle,
+        einrichtung: form.einrichtung,
+        aktiv: form.aktiv,
+      },
+    });
+    if (error || data?.error) {
+      showToast(data?.error || error?.message || "Benutzer konnte nicht angelegt werden.", "#c0392b");
+      return false;
+    }
+    if (data?.user) setUsers(prev => [...prev.filter(u => u.id !== data.user.id), data.user].sort((a, b) => String(a.name).localeCompare(String(b.name))));
+    showToast("Benutzer sicher angelegt ✓");
+    return true;
+  };
+
+  const saveFallaktenFreigaben = async (nutzerId, grants) => {
+    if (!permissions.canManageUsers) return deny("Nur Admins dürfen Fallaktenrechte verwalten.");
+    const rows = grants
+      .filter(g => g.darf_ansehen || g.darf_bearbeiten)
+      .map(g => ({
+        klient_id: g.klient_id,
+        nutzer_id: nutzerId,
+        darf_ansehen: Boolean(g.darf_ansehen || g.darf_bearbeiten),
+        darf_bearbeiten: Boolean(g.darf_bearbeiten),
+        created_by: user?.id || null,
+        updated_at: new Date().toISOString(),
+      }));
+
+    const { error: deleteError } = await supabase.from("fallakten_freigaben").delete().eq("nutzer_id", nutzerId);
+    if (deleteError) {
+      showToast(`Freigaben konnten nicht gespeichert werden: ${deleteError.message}`, "#c0392b");
+      return false;
+    }
+    if (rows.length) {
+      const { error: insertError } = await supabase.from("fallakten_freigaben").insert(rows);
+      if (insertError) {
+        showToast(`Freigaben konnten nicht gespeichert werden: ${insertError.message}`, "#c0392b");
+        await loadFreigaben();
+        return false;
+      }
+    }
+    await loadFreigaben();
+    showToast("Fallaktenrechte gespeichert ✓");
+    return true;
+  };
+
   const openNewEintrag = () => {
     setDictationNotice("");
     setKiCorrection(null);
@@ -800,7 +870,7 @@ function AppContent() {
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
             {view === "stunden" && <StundenView clients={visibleClients} eintraege={eintraege} />}
             {view === "kibericht" && <KIBerichtView clients={visibleClients} eintraege={eintraege} user={user} kiSettings={kiSettings} />}
-            {view === "nutzer" && permissions.canManageUsers && <NutzerView users={users} onToggle={toggleNutzer} showToast={showToast} />}
+            {view === "nutzer" && permissions.canManageUsers && <NutzerView users={users} clients={clients} fallaktenFreigaben={fallaktenFreigaben} onToggle={toggleNutzer} onCreateUser={createSecureUser} onSaveFreigaben={saveFallaktenFreigaben} showToast={showToast} />}
             {view === "einstellungen" && permissions.canUseAdminSettings && <KIEinstellungenView kiSettings={kiSettings} setKiSettings={setKiSettings} showToast={showToast} />}
             {view === "dsgvo" && <DsgvoView />}
           </main>
@@ -2026,14 +2096,43 @@ function VorlagenView({ vorlagen }) {
   );
 }
 
-function NutzerView({ users, onToggle, showToast }) {
+function NutzerView({ users, clients, fallaktenFreigaben, onToggle, onCreateUser, onSaveFreigaben, showToast }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "demo123", rolle: "Fachkraft", einrichtung: EINRICHTUNGEN[0], aktiv: true });
+  const [freigabeUser, setFreigabeUser] = useState(null);
+  const [grantDraft, setGrantDraft] = useState({});
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const createUserHint = () => {
+  const openFreigaben = (u) => {
+    const existing = Object.fromEntries((fallaktenFreigaben || [])
+      .filter(f => String(f.nutzer_id) === String(u.id))
+      .map(f => [String(f.klient_id), { darf_ansehen: Boolean(f.darf_ansehen), darf_bearbeiten: Boolean(f.darf_bearbeiten) }]));
+    setGrantDraft(existing);
+    setFreigabeUser(u);
+  };
+  const setGrant = (clientId, field, value) => {
+    setGrantDraft(prev => {
+      const current = prev[String(clientId)] || { darf_ansehen: false, darf_bearbeiten: false };
+      const next = { ...current, [field]: value };
+      if (field === "darf_bearbeiten" && value) next.darf_ansehen = true;
+      if (field === "darf_ansehen" && !value) next.darf_bearbeiten = false;
+      return { ...prev, [String(clientId)]: next };
+    });
+  };
+  const saveFreigaben = async () => {
+    const rows = clients.map(c => ({
+      klient_id: c.id,
+      darf_ansehen: Boolean(grantDraft[String(c.id)]?.darf_ansehen),
+      darf_bearbeiten: Boolean(grantDraft[String(c.id)]?.darf_bearbeiten),
+    }));
+    const saved = await onSaveFreigaben(freigabeUser.id, rows);
+    if (saved) setFreigabeUser(null);
+  };
+  const createUser = async () => {
     if (!form.name || !form.email) return showToast("Name und E-Mail erforderlich.", "#c0392b");
-    showToast("Nutzeranlage braucht die Supabase Auth/Admin API.", "#b45309");
+    const created = await onCreateUser(form);
+    if (!created) return;
     setShowNew(false);
+    setForm({ name: "", email: "", password: "demo123", rolle: "Fachkraft", einrichtung: EINRICHTUNGEN[0], aktiv: true });
   };
   return (
     <div>
@@ -2052,6 +2151,7 @@ function NutzerView({ users, onToggle, showToast }) {
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ ...rolleStyle(u.rolle), padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{u.rolle}</span>
               <span style={{ background: u.aktiv ? "#dcfce7" : "#fee2e2", color: u.aktiv ? "#16a34a" : "#dc2626", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{u.aktiv ? "Aktiv" : "Deaktiviert"}</span>
+              <button onClick={() => openFreigaben(u)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>Fallaktenrechte</button>
               <button onClick={() => onToggle(u.id, !u.aktiv)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>{u.aktiv ? "Deaktivieren" : "Aktivieren"}</button>
             </div>
           </div>
@@ -2068,11 +2168,48 @@ function NutzerView({ users, onToggle, showToast }) {
             <FormField label="Einrichtung"><select value={form.einrichtung} onChange={e => set("einrichtung", e.target.value)} style={inputStyle}>{EINRICHTUNGEN.map(e => <option key={e}>{e}</option>)}</select></FormField>
           </div>
           <div style={{ background: "#f0f9ff", border: "1px solid #bae6fd", borderRadius: 10, padding: "12px 16px", marginBottom: 16, fontSize: 13, color: "#0369a1" }}>
-            <strong>Rollen:</strong> 🔴 <strong>Admin</strong> – alle Rechte · 🟣 <strong>Leitung</strong> – alle Klienten lesen · 🟢 <strong>Fachkraft</strong> – Klienten verwalten
+            <strong>Sichere Anlage:</strong> Der Auth-User wird über die Supabase Edge Function <code>admin-create-user</code> erstellt. Der Service Role Key liegt dabei nicht im Frontend.
           </div>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button onClick={() => setShowNew(false)} style={btnSecondary}>Abbrechen</button>
-            <button onClick={createUserHint} style={btnPrimary}>Anlegen</button>
+            <button onClick={createUser} style={btnPrimary}>Anlegen</button>
+          </div>
+        </Modal>
+      )}
+      {freigabeUser && (
+        <Modal onClose={() => setFreigabeUser(null)} maxWidth={860}>
+          <h2 style={modalTitleStyle}><SectionIcon name={SECTION_ICONS.klient} />Fallaktenrechte</h2>
+          <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>{freigabeUser.name} · {freigabeUser.rolle}</p>
+          <div style={{ border: "1px solid #e2e8f0", borderRadius: 10, overflow: "hidden", maxHeight: "58vh", overflowY: "auto" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 120px", gap: 0, background: "#f8fafc", borderBottom: "1px solid #e2e8f0", fontSize: 11, color: "#64748b", fontWeight: 800, textTransform: "uppercase" }}>
+              <div style={{ padding: "10px 12px" }}>Fallakte</div>
+              <div style={{ padding: "10px 12px", textAlign: "center" }}>Ansehen</div>
+              <div style={{ padding: "10px 12px", textAlign: "center" }}>Bearbeiten</div>
+            </div>
+            {clients.map(c => {
+              const grant = grantDraft[String(c.id)] || { darf_ansehen: false, darf_bearbeiten: false };
+              return (
+                <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1fr 110px 120px", alignItems: "center", borderBottom: "1px solid #f1f5f9" }}>
+                  <div style={{ padding: "12px" }}>
+                    <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#1e293b" }}>{c.name}</p>
+                    <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{c.aktenzeichen || "ohne Aktenzeichen"} · {c.einrichtung}</p>
+                  </div>
+                  <label style={{ display: "flex", justifyContent: "center", padding: 12 }}>
+                    <input type="checkbox" checked={grant.darf_ansehen} onChange={e => setGrant(c.id, "darf_ansehen", e.target.checked)} />
+                  </label>
+                  <label style={{ display: "flex", justifyContent: "center", padding: 12 }}>
+                    <input type="checkbox" checked={grant.darf_bearbeiten} onChange={e => setGrant(c.id, "darf_bearbeiten", e.target.checked)} />
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#475569", marginTop: 14 }}>
+            Rollenrechte bleiben erhalten: Admins und Leitung sehen weiterhin alle Fallakten. Diese Freigaben erweitern vor allem Fachkraft-Zugriffe gezielt pro Fallakte.
+          </div>
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 16 }}>
+            <button onClick={() => setFreigabeUser(null)} style={btnSecondary}>Abbrechen</button>
+            <button onClick={saveFreigaben} style={btnPrimary}>Rechte speichern</button>
           </div>
         </Modal>
       )}
