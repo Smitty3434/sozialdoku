@@ -133,6 +133,11 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [clientStatusFilter, setClientStatusFilter] = useState("alle");
   const [newEintrag, setNewEintrag] = useState(null);
+  const speechRecognitionRef = useRef(null);
+  const [dictating, setDictating] = useState(false);
+  const [dictationNotice, setDictationNotice] = useState("");
+  const [kiCorrecting, setKiCorrecting] = useState(false);
+  const [kiCorrection, setKiCorrection] = useState(null);
   const [showNewClient, setShowNewClient] = useState(false);
   const [toast, setToast] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -337,6 +342,10 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
+  useEffect(() => () => {
+    if (speechRecognitionRef.current) speechRecognitionRef.current.stop();
+  }, []);
+
   // ── CRUD: Klienten ──────────────────────────────────────────────
   const addClient = async (clientData) => {
     const { data, error } = await supabase.from("klienten").insert([{
@@ -373,6 +382,100 @@ export default function App() {
       showToast("Eintrag gespeichert ✓");
     }
     if (error) showToast("Fehler beim Speichern", "#c0392b");
+  };
+
+  const appendDictationText = (text) => {
+    setNewEintrag(prev => {
+      if (!prev) return prev;
+      const current = prev.text || "";
+      const separator = current.trim() ? " " : "";
+      return { ...prev, text: `${current}${separator}${text}` };
+    });
+  };
+
+  const startDictation = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setDictationNotice("Spracheingabe wird von diesem Browser nicht unterstützt.");
+      return;
+    }
+
+    if (speechRecognitionRef.current) speechRecognitionRef.current.stop();
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "de-DE";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    recognition.onresult = (event) => {
+      let finalText = "";
+      let interimText = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) finalText += `${transcript.trim()} `;
+        else interimText += transcript;
+      }
+      if (finalText.trim()) appendDictationText(finalText.trim());
+      setDictationNotice(interimText.trim()
+        ? `Zwischenergebnis: ${interimText.trim()}`
+        : "Diktat läuft. Erkannter Text wird in die Beschreibung übernommen.");
+    };
+
+    recognition.onerror = (event) => {
+      setDictating(false);
+      setDictationNotice(`Spracheingabe konnte nicht fortgesetzt werden: ${event.error || "unbekannter Fehler"}.`);
+    };
+    recognition.onend = () => setDictating(false);
+
+    speechRecognitionRef.current = recognition;
+    setDictating(true);
+    setDictationNotice("Diktat läuft. Bitte Mikrofonzugriff im Browser erlauben.");
+    recognition.start();
+  };
+
+  const stopDictation = () => {
+    if (speechRecognitionRef.current) speechRecognitionRef.current.stop();
+    setDictating(false);
+    setDictationNotice("Diktat gestoppt.");
+  };
+
+  const runDocumentationCorrection = async () => {
+    if (!newEintrag?.text?.trim()) {
+      showToast("Bitte zuerst Dokumentationstext eingeben.", "#c0392b");
+      return;
+    }
+    if (kiSettings.provider !== "ollama") {
+      showToast("KI-Korrektur ist aktuell über die lokale Ollama-KI angebunden.", "#c0392b");
+      return;
+    }
+
+    const prompt = [
+      "Du korrigierst eine sozialpädagogische Dokumentation ausschließlich sprachlich.",
+      "Korrigiere Rechtschreibung, Grammatik und leichte sprachliche Unklarheiten.",
+      "Keine neuen Informationen hinzufügen. Keine Inhalte umdeuten. Keine fachlichen Ergänzungen.",
+      "Sachlicher, professioneller Dokumentationsstil. Gib ausschließlich den korrigierten Text zurück.",
+      "",
+      `Text:\n${newEintrag.text}`,
+    ].join("\n");
+
+    setKiCorrecting(true);
+    setKiCorrection(null);
+    try {
+      const res = await fetch(`${kiSettings.ollamaUrl}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: kiSettings.ollamaModel, prompt, stream: false })
+      });
+      if (!res.ok) throw new Error(`Ollama antwortet mit HTTP ${res.status}.`);
+      const data = await res.json();
+      const corrected = (data.response || "").trim();
+      if (!corrected) throw new Error("Keine KI-Antwort erhalten.");
+      setKiCorrection({ corrected });
+    } catch (error) {
+      showToast(error.message || "KI-Korrektur fehlgeschlagen.", "#c0392b");
+    } finally {
+      setKiCorrecting(false);
+    }
   };
 
   // ── CRUD: Termine ───────────────────────────────────────────────
@@ -442,6 +545,20 @@ export default function App() {
     showToast(aktiv ? "Nutzer aktiviert ✓" : "Nutzer deaktiviert", aktiv ? "#16825a" : "#c0392b");
   };
 
+  const openNewEintrag = () => {
+    setDictationNotice("");
+    setKiCorrection(null);
+    setNewEintrag({ typ: "Fallverlauf", titel: "", text: "", datum: ds(new Date()), fachkraft: user?.name || "", stunden: "" });
+  };
+
+  const closeNewEintrag = () => {
+    if (speechRecognitionRef.current) speechRecognitionRef.current.stop();
+    setDictating(false);
+    setDictationNotice("");
+    setKiCorrection(null);
+    setNewEintrag(null);
+  };
+
   const upcomingReminders = termine.filter(t => {
     if (!t.erinnerung) return false;
     const diff = dayDiff(t.datum);
@@ -475,6 +592,7 @@ export default function App() {
 
   const canEdit = user?.rolle === "Admin" || user?.rolle === "Fachkraft";
   const isAdmin = user?.rolle === "Admin";
+  const speechSupported = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
 
   return (
     <>
@@ -502,7 +620,7 @@ export default function App() {
                 eintraege={eintraege[selectedClient.id] || []}
                 onBack={() => setView("clients")}
                 canEdit={canEdit}
-                onNewEintrag={canEdit ? () => setNewEintrag({ typ: "Fallverlauf", titel: "", text: "", datum: ds(new Date()), fachkraft: user?.name || "", stunden: "" }) : null}
+                onNewEintrag={canEdit ? openNewEintrag : null}
                 onExport={() => exportPDF(selectedClient, eintraege[selectedClient.id] || [])}
                 onKiBericht={() => setView("kibericht")}
                 notizen={notizen}
@@ -549,14 +667,14 @@ export default function App() {
 
       {/* Neuer Eintrag Modal */}
       {newEintrag && selectedClient && (
-        <Modal onClose={() => setNewEintrag(null)}>
+        <Modal onClose={closeNewEintrag}>
           <h2 style={{ fontFamily: "'DM Serif Display',serif", fontSize: 22, marginBottom: 4 }}>Neuer Eintrag</h2>
           <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>{selectedClient.name}</p>
           <div style={{ marginBottom: 16 }}>
             <p style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>📋 Vorlage verwenden</p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {VORLAGEN.map(v => (
-                <button key={v.id} onClick={() => setNewEintrag(prev => ({ ...prev, typ: v.typ, titel: v.titel, text: v.text }))}
+                <button key={v.id} onClick={() => { setKiCorrection(null); setNewEintrag(prev => ({ ...prev, typ: v.typ, titel: v.titel, text: v.text })); }}
                   style={{ background: typBg(v.typ), color: typeColor(v.typ), border: "none", borderRadius: 6, padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "'DM Sans',sans-serif" }}>
                   {v.titel}
                 </button>
@@ -567,13 +685,39 @@ export default function App() {
           <FormField label="Typ"><select value={newEintrag.typ} onChange={e => setNewEintrag({ ...newEintrag, typ: e.target.value })} style={inputStyle}><option>Fallverlauf</option><option>Maßnahme</option><option>Stunden</option></select></FormField>
           <FormField label="Titel"><input value={newEintrag.titel} onChange={e => setNewEintrag({ ...newEintrag, titel: e.target.value })} style={inputStyle} placeholder="Kurztitel…" /></FormField>
           {newEintrag.typ === "Stunden" && <FormField label="Stunden"><input type="number" step="0.5" value={newEintrag.stunden} onChange={e => setNewEintrag({ ...newEintrag, stunden: e.target.value })} style={inputStyle} /></FormField>}
-          <FormField label="Beschreibung"><textarea rows={4} value={newEintrag.text} onChange={e => setNewEintrag({ ...newEintrag, text: e.target.value })} style={{ ...inputStyle, resize: "vertical" }} placeholder="Details…" /></FormField>
+          <FormField label="Beschreibung">
+            <textarea rows={5} value={newEintrag.text} onChange={e => { setKiCorrection(null); setNewEintrag({ ...newEintrag, text: e.target.value }); }} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6 }} placeholder="Details…" />
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+              <button type="button" onClick={dictating ? stopDictation : startDictation} style={dictating ? { ...btnPrimary, background: "#475569", borderColor: "#475569" } : btnSecondary}>
+                {dictating ? "Diktieren stoppen" : "Diktieren starten"}
+              </button>
+              <button type="button" onClick={runDocumentationCorrection} disabled={kiCorrecting} style={{ ...btnSecondary, opacity: kiCorrecting ? .65 : 1, cursor: kiCorrecting ? "wait" : "pointer" }}>
+                {kiCorrecting ? "KI prüft…" : "Rechtschreibung & Grammatik prüfen"}
+              </button>
+            </div>
+            {!speechSupported && (
+              <p style={{ margin: "8px 0 0", color: "#64748b", fontSize: 12, lineHeight: 1.5 }}>Spracheingabe wird von diesem Browser nicht unterstützt. Der Text kann weiterhin manuell erfasst werden.</p>
+            )}
+            {dictationNotice && (
+              <p style={{ margin: "8px 0 0", color: dictating ? "#1e3a5f" : "#64748b", fontSize: 12, lineHeight: 1.5 }}>{dictationNotice}</p>
+            )}
+            {kiCorrection && (
+              <div style={{ marginTop: 12, border: "1px solid #cbd5e1", borderRadius: 8, background: "#f8fafc", padding: "12px 14px" }}>
+                <p style={{ margin: "0 0 8px", color: "#334155", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>KI-Vorschlag, Original bleibt oben bearbeitbar</p>
+                <p style={{ margin: 0, color: "#1f2937", fontSize: 14, lineHeight: 1.65, whiteSpace: "pre-wrap" }}>{kiCorrection.corrected}</p>
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+                  <button type="button" onClick={() => setKiCorrection(null)} style={btnSecondary}>Verwerfen</button>
+                  <button type="button" onClick={() => { setNewEintrag(prev => ({ ...prev, text: kiCorrection.corrected })); setKiCorrection(null); }} style={btnPrimary}>Vorschlag übernehmen</button>
+                </div>
+              </div>
+            )}
+          </FormField>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
-            <button onClick={() => setNewEintrag(null)} style={btnSecondary}>Abbrechen</button>
+            <button onClick={closeNewEintrag} style={btnSecondary}>Abbrechen</button>
             <button onClick={async () => {
               if (!newEintrag.titel || !newEintrag.text) return showToast("Bitte Titel und Beschreibung ausfüllen.", "#c0392b");
               await addEintrag(newEintrag, selectedClient.id);
-              setNewEintrag(null);
+              closeNewEintrag();
             }} style={btnPrimary}>Speichern</button>
           </div>
         </Modal>
