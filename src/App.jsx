@@ -195,7 +195,10 @@ function AppContent() {
   const [notizen, setNotizen] = useState([]);
   const [selectedClient, setSelectedClient] = useState(null);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [clientStatusFilter, setClientStatusFilter] = useState("alle");
+  const [clientEinrichtungFilter, setClientEinrichtungFilter] = useState("alle");
+  const [clientInternFilter, setClientInternFilter] = useState("alle");
   const [newEintrag, setNewEintrag] = useState(null);
   const speechRecognitionRef = useRef(null);
   const [dictating, setDictating] = useState(false);
@@ -795,6 +798,11 @@ function AppContent() {
     return diff >= 0 && diff <= 3;
   });
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search.trim().toLowerCase()), 180);
+    return () => clearTimeout(timer);
+  }, [search]);
+
   // ── Loading Screen ──────────────────────────────────────────────
   if (loading) return (
     <div style={{ minHeight: "100vh", background: "linear-gradient(135deg,#0f2647,#1a4480)", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 20 }}>
@@ -810,14 +818,23 @@ function AppContent() {
     return null;
   }} />;
 
+  const visibleEinrichtungen = [...new Set(visibleClients.map(c => c.einrichtung).filter(Boolean))].sort((a, b) => a.localeCompare(b, "de"));
+  const visibleInternOptions = [...new Map(visibleClients.flatMap(c => (fallakten?.[c.id]?.intern || [])
+    .filter(i => i.userId || i.name)
+    .map(i => [String(i.userId || i.name), i.name || i.email || "Zuständige Person"]))).entries()]
+    .map(([id, name]) => ({ id, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, "de"));
+
   const filteredClients = visibleClients.filter(c => {
-    const q = search.toLowerCase();
-    const matchesSearch =
-      c.name.toLowerCase().includes(q) ||
-      (c.aktenzeichen || "").toLowerCase().includes(q) ||
-      (c.einrichtung || "").toLowerCase().includes(q);
+    const q = debouncedSearch;
+    const matchesSearch = !q ||
+      (c.name || "").toLowerCase().includes(q) ||
+      (c.aktenzeichen || "").toLowerCase().includes(q);
     const matchesStatus = clientStatusFilter === "alle" || c.status === clientStatusFilter || (clientStatusFilter === "abgeschlossen" && c.status === "behandelt");
-    return matchesSearch && matchesStatus;
+    const matchesEinrichtung = clientEinrichtungFilter === "alle" || c.einrichtung === clientEinrichtungFilter;
+    const internAssignments = fallakten?.[c.id]?.intern || [];
+    const matchesIntern = clientInternFilter === "alle" || internAssignments.some(i => String(i.userId || i.name) === clientInternFilter);
+    return matchesSearch && matchesStatus && matchesEinrichtung && matchesIntern;
   });
 
   const speechSupported = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -842,7 +859,7 @@ function AppContent() {
 
           <main className="main-content">
             {view === "dashboard" && <Dashboard clients={visibleClients} fallakten={fallakten} eintraege={eintraege} termine={visibleTermine} setView={setView} setSelectedClient={setSelectedClient} user={user} permissions={permissions} />}
-            {view === "clients" && <ClientsView clients={filteredClients} allClients={visibleClients} search={search} setSearch={setSearch} statusFilter={clientStatusFilter} setStatusFilter={setClientStatusFilter} permissions={permissions} onSelect={(c) => { setSelectedClient(c); setView("detail"); }} onNew={permissions.canCreateClient ? () => setShowNewClient(true) : null} />}
+            {view === "clients" && <ClientsView clients={filteredClients} allClients={visibleClients} search={search} setSearch={setSearch} statusFilter={clientStatusFilter} setStatusFilter={setClientStatusFilter} einrichtungFilter={clientEinrichtungFilter} setEinrichtungFilter={setClientEinrichtungFilter} internFilter={clientInternFilter} setInternFilter={setClientInternFilter} einrichtungen={visibleEinrichtungen} internOptions={visibleInternOptions} permissions={permissions} onSelect={(c) => { setSelectedClient(c); setView("detail"); }} onNew={permissions.canCreateClient ? () => setShowNewClient(true) : null} />}
             {view === "detail" && selectedClient && canViewClient(selectedClient.id) && (
               <DetailView
                 client={selectedClient}
@@ -1066,6 +1083,8 @@ function Sidebar({ view, setView, user, onLogout, isOpen, notifications, permiss
 }
 
 function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelectedClient, user, permissions }) {
+  const [clientSearch, setClientSearch] = useState("");
+  const [clientQuickFilter, setClientQuickFilter] = useState("alle");
   const myClients = clients.filter(c => (fallakten?.[c.id]?.intern || []).some(i => String(i.userId) === String(user?.id)));
   const dashboardClients = permissions.canViewAllCases ? clients : myClients;
   const dashboardClientIds = new Set(dashboardClients.map(c => String(c.id)));
@@ -1080,6 +1099,22 @@ function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelecte
   const getClientId = (entry) => entry.klientId || Object.entries(eintraege).find(([, v]) => v.some(e => e.id === entry.id))?.[0];
   const today = ds(new Date());
   const nextTermine = [...termine].sort((a, b) => new Date(a.datum) - new Date(b.datum)).filter(t => t.datum >= today && (!t.klientId || dashboardClientIds.has(String(t.klientId)))).slice(0, 3);
+  const lastEntryByClient = Object.fromEntries(Object.entries(eintraege)
+    .filter(([clientId]) => dashboardClientIds.has(String(clientId)))
+    .map(([clientId, items]) => [clientId, [...(items || [])].sort((a, b) => new Date(b.datum) - new Date(a.datum))[0]?.datum || ""]));
+  const dashboardSearch = clientSearch.trim().toLowerCase();
+  const visibleDashboardClients = dashboardClients
+    .filter(c => {
+      const hasOpenTasks = (fallakten?.[c.id]?.aufgaben || []).some(a => a.status !== "erledigt");
+      const matchesSearch = !dashboardSearch || (c.name || "").toLowerCase().includes(dashboardSearch) || (c.aktenzeichen || "").toLowerCase().includes(dashboardSearch);
+      const matchesQuickFilter =
+        clientQuickFilter === "alle" ||
+        (clientQuickFilter === "aktiv" && c.status === "aktiv") ||
+        (clientQuickFilter === "offene" && hasOpenTasks) ||
+        clientQuickFilter === "zuletzt";
+      return matchesSearch && matchesQuickFilter;
+    })
+    .sort((a, b) => clientQuickFilter === "zuletzt" ? new Date(lastEntryByClient[b.id] || 0) - new Date(lastEntryByClient[a.id] || 0) : 0);
   return (
     <div>
       <h1 style={pageTitle}>Dashboard</h1>
@@ -1095,12 +1130,26 @@ function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelecte
       <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         <div style={card}>
           <h2 style={cardTitle}>{permissions.canViewAllCases ? "Sichtbare Fallakten" : "Meine Klienten"}</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginBottom: 12 }}>
+            <input value={clientSearch} onChange={e => setClientSearch(e.target.value)} placeholder="Meine Klienten suchen…" style={{ ...inputStyle, fontSize: 13, padding: "10px 12px" }} />
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {[
+                { id: "alle", label: "Alle" },
+                { id: "aktiv", label: "Aktive" },
+                { id: "offene", label: "Offene Aufgaben" },
+                { id: "zuletzt", label: "Zuletzt bearbeitet" },
+              ].map(filter => (
+                <button key={filter.id} onClick={() => setClientQuickFilter(filter.id)} style={{ border: clientQuickFilter === filter.id ? "1px solid #64748b" : "1px solid #e2e8f0", background: clientQuickFilter === filter.id ? "#f1f5f9" : "#fff", color: clientQuickFilter === filter.id ? "#1e293b" : "#64748b", borderRadius: 999, padding: "5px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{filter.label}</button>
+              ))}
+            </div>
+          </div>
           {dashboardClients.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine interne Zuständigkeit hinterlegt.</p>}
-          {dashboardClients.map(c => (
+          {dashboardClients.length > 0 && visibleDashboardClients.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine passenden Klienten gefunden.</p>}
+          {visibleDashboardClients.map(c => (
             <div key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "11px 0", borderBottom: "1px solid #f1f5f9" }}>
               <div style={{ minWidth: 0 }}>
                 <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</p>
-                <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{c.aktenzeichen || "ohne Aktenzeichen"} · {c.status || "ohne Status"}</p>
+                <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{c.aktenzeichen || "ohne Aktenzeichen"} · {c.status || "ohne Status"}{lastEntryByClient[c.id] ? ` · zuletzt ${formatDate(lastEntryByClient[c.id])}` : ""}</p>
               </div>
               <button onClick={() => { setSelectedClient(c); setView("detail"); }} style={{ ...btnSecondary, fontSize: 11, padding: "5px 10px", whiteSpace: "nowrap" }}>Öffnen</button>
             </div>
@@ -1153,13 +1202,14 @@ function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelecte
   );
 }
 
-function ClientsView({ clients, allClients, search, setSearch, statusFilter, setStatusFilter, permissions, onSelect, onNew }) {
+function ClientsView({ clients, allClients, search, setSearch, statusFilter, setStatusFilter, einrichtungFilter, setEinrichtungFilter, internFilter, setInternFilter, einrichtungen, internOptions, permissions, onSelect, onNew }) {
   const tabs = [
     { id: "alle", label: "Alle", count: allClients.length },
     { id: "aktiv", label: "Aktiv", count: allClients.filter(c => c.status === "aktiv").length },
     { id: "abgeschlossen", label: "Abgeschlossen", count: allClients.filter(c => c.status === "abgeschlossen" || c.status === "behandelt").length },
     { id: "archiviert", label: "Archiviert", count: allClients.filter(c => c.status === "archiviert").length },
   ];
+  const hasAdvancedFilters = einrichtungen.length > 1 || internOptions.length > 1;
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
@@ -1177,6 +1227,22 @@ function ClientsView({ clients, allClients, search, setSearch, statusFilter, set
         <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: "#94a3b8" }}>🔍</span>
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Name oder Aktenzeichen suchen…" style={{ ...inputStyle, paddingLeft: 40 }} />
       </div>
+      {hasAdvancedFilters && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(180px,1fr))", gap: 10, marginBottom: 20 }}>
+          {einrichtungen.length > 1 && (
+            <select value={einrichtungFilter} onChange={e => setEinrichtungFilter(e.target.value)} style={inputStyle}>
+              <option value="alle">Alle Einrichtungen</option>
+              {einrichtungen.map(e => <option key={e} value={e}>{e}</option>)}
+            </select>
+          )}
+          {internOptions.length > 1 && (
+            <select value={internFilter} onChange={e => setInternFilter(e.target.value)} style={inputStyle}>
+              <option value="alle">Alle Zuständigen</option>
+              {internOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}
+            </select>
+          )}
+        </div>
+      )}
       <div style={{ ...card, padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 560 }}>
@@ -1367,6 +1433,8 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   const [selectedInternUserId, setSelectedInternUserId] = useState("");
   const [pdfPreview, setPdfPreview] = useState(null);
   const [editingDoc, setEditingDoc] = useState(null);
+  const [taskStatusFilter, setTaskStatusFilter] = useState("alle");
+  const [taskSearch, setTaskSearch] = useState("");
   const fileInputRef = useRef(null);
   const akte = fallakten?.[client.id] || createEmptyFallakte(client);
   const clientNotizen = (notizen || []).filter(n => n.klientId == client.id);
@@ -1375,6 +1443,12 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   const canDeleteFiles = permissions?.canDeleteFiles;
   const canManageAssignments = permissions?.canManageAssignments;
   const blockEdit = () => showToast("Du darfst diese Fallakte nicht bearbeiten.", "#c0392b");
+  const taskQuery = taskSearch.trim().toLowerCase();
+  const filteredAufgaben = (akte.aufgaben || []).filter(item => {
+    const matchesStatus = taskStatusFilter === "alle" || item.status === taskStatusFilter;
+    const matchesSearch = !taskQuery || (item.titel || "").toLowerCase().includes(taskQuery) || (item.notiz || "").toLowerCase().includes(taskQuery);
+    return matchesStatus && matchesSearch;
+  });
 
   const patchAkte = (updater) => {
     setFallakten(prev => {
@@ -1770,8 +1844,25 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
             <input type="date" value={quickFields.aufgabeDatum} onChange={e => setQuickFields(p => ({ ...p, aufgabeDatum: e.target.value }))} style={inputStyle} />
             <button onClick={() => { if (!quickFields.aufgabe.trim()) return; addSimpleItem("aufgaben", { titel: quickFields.aufgabe, status: "offen", notiz: "", datum: quickFields.aufgabeDatum || ds(new Date()) }); setQuickFields(p => ({ ...p, aufgabe: "", aufgabeDatum: ds(new Date()) })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Hinzufügen</button>
           </div>}
+          {(akte.aufgaben || []).length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 9, marginBottom: 12, padding: "10px 0", borderTop: "1px solid #f1f5f9", borderBottom: "1px solid #f1f5f9" }}>
+              <input value={taskSearch} onChange={e => setTaskSearch(e.target.value)} style={{ ...inputStyle, fontSize: 13, padding: "9px 11px" }} placeholder="Aufgaben nach Titel oder Beschreibung suchen…" />
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {[
+                  { id: "alle", label: "Alle" },
+                  { id: "offen", label: "Offen" },
+                  { id: "in_bearbeitung", label: "In Bearbeitung" },
+                  { id: "erledigt", label: "Erledigt" },
+                ].map(filter => (
+                  <button key={filter.id} onClick={() => setTaskStatusFilter(filter.id)} style={{ border: taskStatusFilter === filter.id ? "1px solid #64748b" : "1px solid #e2e8f0", background: taskStatusFilter === filter.id ? "#f1f5f9" : "#fff", color: taskStatusFilter === filter.id ? "#1e293b" : "#64748b", borderRadius: 999, padding: "5px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{filter.label}</button>
+                ))}
+                <span style={{ marginLeft: "auto", color: "#94a3b8", fontSize: 12, alignSelf: "center" }}>{filteredAufgaben.length} von {(akte.aufgaben || []).length}</span>
+              </div>
+            </div>
+          )}
           {(akte.aufgaben || []).length === 0 && <EmptyState>Noch keine Aufgaben erfasst.</EmptyState>}
-          {(akte.aufgaben || []).map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={canDeleteRecords ? () => removeItem("aufgaben", item.id) : null} />)}
+          {(akte.aufgaben || []).length > 0 && filteredAufgaben.length === 0 && <EmptyState>Keine passenden Aufgaben gefunden.</EmptyState>}
+          {filteredAufgaben.map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={canDeleteRecords ? () => removeItem("aufgaben", item.id) : null} />)}
         </AkteSection>
 
         <AkteSection sectionKey="extern" title="Zuständigkeit extern" open={openMap["extern"]} onToggle={toggleSection}>
