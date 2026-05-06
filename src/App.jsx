@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { differenceInCalendarDays, format, isValid, parseISO, startOfDay } from "date-fns";
+import { addMonths, differenceInCalendarDays, eachDayOfInterval, endOfMonth, format, isValid, parseISO, startOfDay, startOfMonth, subMonths } from "date-fns";
 import { de } from "date-fns/locale";
 import { ErrorBoundary } from "react-error-boundary";
 import { useForm } from "react-hook-form";
@@ -2530,6 +2530,9 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   const [importError, setImportError] = useState("");
   const [importing, setImporting] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [calendarMode, setCalendarMode] = useState("liste");
+  const [monthCursor, setMonthCursor] = useState(startOfMonth(new Date()));
+  const [selectedMonthDate, setSelectedMonthDate] = useState(ds(new Date()));
   const importFileRef = useRef(null);
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const today = ds(new Date());
@@ -2537,6 +2540,33 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   const upcomingTermine = sorted.filter(t => t.datum >= today && t.status !== "erledigt" && t.status !== "abgesagt");
   const archivedTermine = sorted.filter(t => t.datum < today || t.status === "erledigt" || t.status === "abgesagt");
   const getKlient = (id) => clients.find(c => c.id == id);
+  const monthStart = startOfMonth(monthCursor);
+  const monthEnd = endOfMonth(monthCursor);
+  const monthLeadingDays = (monthStart.getDay() + 6) % 7;
+  const monthGridStart = new Date(monthStart);
+  monthGridStart.setDate(monthGridStart.getDate() - monthLeadingDays);
+  const monthGridEnd = new Date(monthEnd);
+  monthGridEnd.setDate(monthGridEnd.getDate() + ((7 - ((monthLeadingDays + monthEnd.getDate()) % 7)) % 7));
+  const monthDays = eachDayOfInterval({ start: monthGridStart, end: monthGridEnd });
+  const monthEvents = [
+    ...termine.map(t => ({ id: `app-${t.id}`, source: "app", datum: t.datum, uhrzeit: t.uhrzeit || "", titel: t.titel, ort: t.ort, status: t.status || "geplant", klientId: t.klientId, raw: t })),
+    ...(outlookEvents || []).map(event => ({ id: `outlook-${event.id}`, source: "outlook", datum: event.datum, uhrzeit: event.uhrzeit || "", titel: event.title, ort: event.location, status: "outlook", raw: event })),
+  ].filter(event => event.datum);
+  const monthEventsByDate = monthEvents.reduce((acc, event) => {
+    acc[event.datum] = [...(acc[event.datum] || []), event];
+    return acc;
+  }, {});
+  const selectedDayEvents = [...(monthEventsByDate[selectedMonthDate] || [])].sort((a, b) => (a.uhrzeit || "00:00").localeCompare(b.uhrzeit || "00:00"));
+  const viewButtonStyle = (active) => ({
+    border: "none",
+    background: active ? "#1e3a5f" : "transparent",
+    color: active ? "#fff" : "#475569",
+    padding: "8px 12px",
+    fontSize: 12,
+    fontWeight: 800,
+    cursor: "pointer",
+    fontFamily: "'DM Sans',sans-serif",
+  });
   const existingUidSet = new Set(termine.map(t => t.external_uid).filter(Boolean));
   const existingKeySet = new Set(termine.map(terminImportKey));
   const markDuplicates = (items) => items.map(item => ({
@@ -2600,14 +2630,18 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
         <div><IconHeading icon="termine" level="h1" style={pageTitle}>Kalender & Termine</IconHeading><p style={pageSubtitle}>{upcomingTermine.length} anstehende Termine · {archivedTermine.length} vergangen / erledigt ausgeblendet</p>{outlookStatusLine}</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "inline-flex", overflow: "hidden", border: "1px solid #dbe3ea", borderRadius: 999, background: "#fff" }}>
+            <button type="button" onClick={() => setCalendarMode("liste")} style={viewButtonStyle(calendarMode === "liste")}>Liste</button>
+            <button type="button" onClick={() => setCalendarMode("monat")} style={viewButtonStyle(calendarMode === "monat")}>Monat</button>
+          </div>
           <input ref={importFileRef} type="file" accept=".ics,text/calendar" onChange={handleIcsFile} style={{ display: "none" }} />
           <button onClick={() => importFileRef.current?.click()} style={btnSecondary}>Kalender importieren</button>
           <button onClick={onConnectOutlook} style={btnSecondary}>Outlook verbinden</button>
-          <button onClick={() => setShowCompleted(p => !p)} style={btnSecondary}>{showCompleted ? "Vergangene / erledigte ausblenden" : "Vergangene / erledigte Termine anzeigen"}</button>
+          {calendarMode === "liste" && <button onClick={() => setShowCompleted(p => !p)} style={btnSecondary}>{showCompleted ? "Vergangene / erledigte ausblenden" : "Vergangene / erledigte Termine anzeigen"}</button>}
           <button onClick={() => setShowNew(true)} style={btnPrimary}>+ Neuer Termin</button>
         </div>
       </div>
-      <div style={card}>
+      {calendarMode === "liste" && <div style={card}>
         <IconHeading icon="termine">Anstehende Termine</IconHeading>
         {upcomingTermine.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine anstehenden Termine geplant.</p>}
         {upcomingTermine.map(t => {
@@ -2641,7 +2675,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
             </div>
           );
         })}
-      </div>
+      </div>}
       {(importPreview.length > 0 || importError) && (
         <div style={{ ...card, marginTop: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
@@ -2679,7 +2713,96 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
           )}
         </div>
       )}
-      {showCompleted && (
+      {calendarMode === "monat" && (
+        <div style={{ ...card, marginTop: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+            <div>
+              <IconHeading icon="termine">Monatsansicht</IconHeading>
+              <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>{monthEvents.filter(event => event.datum >= ds(monthStart) && event.datum <= ds(monthEnd)).length} sichtbare Termine in diesem Monat</p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => setMonthCursor(prev => subMonths(prev, 1))} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>Zurück</button>
+              <span style={{ minWidth: 132, textAlign: "center", color: "#1f2937", fontWeight: 800, fontSize: 14 }}>{format(monthCursor, "MMMM yyyy", { locale: de })}</span>
+              <button type="button" onClick={() => setMonthCursor(prev => addMonths(prev, 1))} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>Weiter</button>
+              <button type="button" onClick={() => { setMonthCursor(startOfMonth(new Date())); setSelectedMonthDate(today); }} style={{ ...btnSecondary, fontSize: 12, padding: "6px 10px" }}>Heute</button>
+            </div>
+          </div>
+          <div className="calendar-month-grid calendar-weekdays" style={{ marginBottom: 8 }}>
+            {["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"].map(day => (
+              <div key={day} style={{ color: "#64748b", fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: ".04em", padding: "0 6px" }}>{day}</div>
+            ))}
+          </div>
+          <div className="calendar-month-grid">
+            {monthDays.map(day => {
+              const key = ds(day);
+              const dayEvents = [...(monthEventsByDate[key] || [])].sort((a, b) => (a.uhrzeit || "00:00").localeCompare(b.uhrzeit || "00:00"));
+              const inCurrentMonth = day >= monthStart && day <= monthEnd;
+              const isToday = key === today;
+              const isSelected = key === selectedMonthDate;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setSelectedMonthDate(key)}
+                  className="calendar-day-cell"
+                  style={{
+                    minHeight: 118,
+                    border: isSelected ? "1px solid #1e3a5f" : "1px solid #e2e8f0",
+                    borderRadius: 8,
+                    background: isSelected ? "#f8fafc" : "#fff",
+                    opacity: inCurrentMonth ? 1 : .42,
+                    padding: 10,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontFamily: "'DM Sans',sans-serif",
+                    boxShadow: isSelected ? "0 0 0 3px rgba(30,58,95,.08)" : "none",
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 7 }}>
+                    <span className="calendar-day-title" style={{ color: isToday ? "#1e3a5f" : "#334155", fontSize: 13, fontWeight: isToday ? 900 : 800 }}>{format(day, "d")}</span>
+                    {dayEvents.length > 0 && <span style={{ background: isToday ? "#e0f2fe" : "#f1f5f9", border: "1px solid #dbe3ea", borderRadius: 999, color: isToday ? "#075985" : "#475569", fontSize: 10, fontWeight: 900, padding: "1px 6px" }}>{dayEvents.length}</span>}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                    {dayEvents.slice(0, 3).map(event => (
+                      <div key={event.id} className="calendar-day-event" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderLeft: `3px solid ${event.source === "outlook" ? "#3b82f6" : "#64748b"}`, paddingLeft: 6, color: "#334155", fontSize: 11, fontWeight: 700 }}>
+                        {event.uhrzeit && <span style={{ color: "#64748b", fontWeight: 800 }}>{event.uhrzeit} </span>}{event.titel}
+                      </div>
+                    ))}
+                    {dayEvents.length > 3 && <div className="calendar-day-event" style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>+{dayEvents.length - 3} weitere</div>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ borderTop: "1px solid #e2e8f0", marginTop: 18, paddingTop: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+              <p style={{ margin: 0, color: "#1f2937", fontSize: 14, fontWeight: 900 }}>Termine am {formatDate(selectedMonthDate)}</p>
+              <span style={{ ...statusChipStyle, background: "#f8fafc", borderColor: "#dbe3ea", color: "#475569" }}>{selectedDayEvents.length} Termine</span>
+            </div>
+            {selectedDayEvents.length === 0 && <EmptyState>Für diesen Tag sind keine sichtbaren Termine vorhanden.</EmptyState>}
+            {selectedDayEvents.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {selectedDayEvents.map(event => {
+                  const k = event.klientId ? getKlient(event.klientId) : null;
+                  return (
+                    <div key={event.id} style={{ display: "grid", gridTemplateColumns: "86px 1fr", gap: 12, padding: "10px 0", borderTop: "1px solid #f1f5f9" }}>
+                      <p style={{ margin: 0, color: "#475569", fontSize: 13, fontWeight: 900 }}>{event.uhrzeit || "ganztägig"}</p>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <p style={{ ...recordTitleStyle, margin: 0 }}>{event.titel}</p>
+                          <span style={{ ...statusChipStyle, background: event.source === "outlook" ? "#eff6ff" : "#f8fafc", borderColor: event.source === "outlook" ? "#bfdbfe" : "#cbd5e1", color: event.source === "outlook" ? "#1e3a8a" : "#475569" }}>{event.source === "outlook" ? "Outlook" : event.status}</span>
+                        </div>
+                        {(event.ort || k) && <p style={{ ...recordMetaStyle, marginTop: 4 }}>{[event.ort, k?.name].filter(Boolean).join(" · ")}</p>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {calendarMode === "liste" && showCompleted && (
         <div style={{ ...card, marginTop: 20 }}>
           <IconHeading icon="termine">Vergangene / erledigte Termine</IconHeading>
           {archivedTermine.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine vergangenen oder erledigten Termine vorhanden.</p>}
@@ -2702,7 +2825,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
           })}
         </div>
       )}
-      <div style={{ ...card, marginTop: 20 }}>
+      {calendarMode === "liste" && <div style={{ ...card, marginTop: 20 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
           <div>
             <IconHeading icon="termine">Outlook-Termine</IconHeading>
@@ -2742,7 +2865,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
             ))}
           </div>
         )}
-      </div>
+      </div>}
       {showNew && (
         <Modal onClose={() => setShowNew(false)}>
           <h2 style={modalTitleStyle}><SectionIcon name={SECTION_ICONS.termine} />Neuen Termin anlegen</h2>
@@ -3801,6 +3924,7 @@ const globalStyles = `
   .toast { position: fixed; bottom: 28px; right: 28px; color: #fff; padding: 12px 22px; border-radius: 10px; font-family: 'DM Sans',sans-serif; font-weight: 600; font-size: 14px; z-index: 9999; box-shadow: 0 4px 20px rgba(0,0,0,.18); animation: fadeIn .3s; }
 
   .notizen-layout { display: grid; grid-template-columns: 220px 1fr; gap: 24px; align-items: start; }
+  .calendar-month-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; }
   @media (max-width: 920px) {
     .sidebar { position: fixed; left: 0; top: 0; bottom: 0; z-index: 200; transform: translateX(-100%); width: 260px; padding-top: 20px; transition: transform .28s ease; }
     .sidebar-open { transform: translateX(0) !important; }
@@ -3818,6 +3942,9 @@ const globalStyles = `
     .akte-grid { grid-template-columns: 1fr !important; }
     .akte-grid > * { grid-column: auto !important; }
     .chrono-grid { grid-template-columns: 1fr 1fr !important; }
+    .calendar-month-grid { gap: 4px !important; }
+    .calendar-day-cell { min-height: 86px !important; padding: 7px !important; }
+    .calendar-day-event { display: none !important; }
     h1 { line-height: 1.12; }
     input, select, textarea, button { max-width: 100%; }
     .main-content { padding: 18px 12px 88px; }
