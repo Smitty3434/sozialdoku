@@ -145,6 +145,7 @@ const typBg = () => "#f1f5f9";
 const rolleStyle = (r) => ROLLEN_FARBEN[r] || { bg: "#f1f5f9", color: "#475569" };
 const normalizeRole = (role) => ROLLEN.includes(role) ? role : "Fachkraft";
 const mapTermin = (t) => ({ ...t, klientId: t.klient_id, erinnerung: Boolean(t.erinnerung), status: t.status || "geplant" });
+const terminImportKey = (t) => `${String(t.titel || t.title || "").trim().toLowerCase()}|${t.datum || ""}|${(t.uhrzeit || "").slice(0, 5)}`;
 const resolveUserName = (id, users = [], currentUser = null, fallback = "Unbekannt") => {
   if (!id) return fallback;
   if (currentUser?.id && String(currentUser.id) === String(id)) return currentUser.name || fallback;
@@ -154,6 +155,57 @@ const dayDiff = (date, from = new Date()) => {
   const parsed = parseAppDate(date);
   if (!parsed) return Number.POSITIVE_INFINITY;
   return differenceInCalendarDays(startOfDay(parsed), startOfDay(from));
+};
+const unfoldIcsLines = (text) => String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").reduce((lines, line) => {
+  if (/^[ \t]/.test(line) && lines.length) lines[lines.length - 1] += line.slice(1);
+  else lines.push(line);
+  return lines;
+}, []);
+const unescapeIcsText = (value = "") => String(value)
+  .replace(/\\n/gi, "\n")
+  .replace(/\\,/g, ",")
+  .replace(/\\;/g, ";")
+  .replace(/\\\\/g, "\\")
+  .trim();
+const parseIcsDateValue = (value = "") => {
+  const raw = String(value).trim();
+  const dateMatch = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (dateMatch) return { datum: `${dateMatch[1]}-${dateMatch[2]}-${dateMatch[3]}`, uhrzeit: "", allDay: true };
+  const dateTimeMatch = raw.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?(Z)?$/);
+  if (!dateTimeMatch) return { datum: "", uhrzeit: "", allDay: false };
+  const [, y, m, d, hh, mm, ss = "00", z] = dateTimeMatch;
+  const parsed = z
+    ? new Date(Date.UTC(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss)))
+    : new Date(Number(y), Number(m) - 1, Number(d), Number(hh), Number(mm), Number(ss));
+  return isValid(parsed) ? { datum: ds(parsed), uhrzeit: format(parsed, "HH:mm"), allDay: false } : { datum: "", uhrzeit: "", allDay: false };
+};
+const parseIcsCalendar = (text) => {
+  const lines = unfoldIcsLines(text);
+  const events = [];
+  let current = null;
+  lines.forEach(line => {
+    const separator = line.indexOf(":");
+    if (separator < 0) return;
+    const left = line.slice(0, separator);
+    const value = line.slice(separator + 1);
+    const prop = left.split(";")[0].toUpperCase();
+    if (prop === "BEGIN" && value.toUpperCase() === "VEVENT") {
+      current = {};
+      return;
+    }
+    if (prop === "END" && value.toUpperCase() === "VEVENT") {
+      if (current?.titel && current?.datum) events.push({ ...current, importId: current.external_uid || `${current.titel}-${current.datum}-${current.uhrzeit || ""}-${events.length}` });
+      current = null;
+      return;
+    }
+    if (!current) return;
+    if (prop === "UID") current.external_uid = unescapeIcsText(value);
+    if (prop === "SUMMARY") current.titel = unescapeIcsText(value) || "Importierter Termin";
+    if (prop === "LOCATION") current.ort = unescapeIcsText(value);
+    if (prop === "DESCRIPTION") current.notiz = unescapeIcsText(value);
+    if (prop === "DTSTART") Object.assign(current, parseIcsDateValue(value));
+  });
+  return events;
 };
 
 // ── Print / PDF Export ─────────────────────────────────────────────
@@ -860,6 +912,8 @@ function AppContent() {
       notiz: termin.notiz || "",
       erinnerung: Boolean(termin.erinnerung),
       status: "geplant",
+      import_source: termin.import_source || null,
+      external_uid: termin.external_uid || null,
       outlook_sync_requested: wantsOutlookSync,
       outlook_sync_status: wantsOutlookSync ? "pending" : "none",
       created_by: session.user.id,
@@ -873,6 +927,39 @@ function AppContent() {
     }
     if (error) showToast(`Termin konnte nicht gespeichert werden: ${error.message}`, "#c0392b");
     return false;
+  };
+
+  const importTermine = async (items) => {
+    const existingUidSet = new Set(termine.map(t => t.external_uid).filter(Boolean));
+    const existingKeySet = new Set(termine.map(terminImportKey));
+    const rows = (items || [])
+      .filter(item => item?.titel && item?.datum)
+      .filter(item => !(item.external_uid && existingUidSet.has(item.external_uid)) && !existingKeySet.has(terminImportKey(item)))
+      .map(item => ({
+        titel: item.titel,
+        datum: item.datum,
+        uhrzeit: item.uhrzeit || null,
+        klient_id: null,
+        fachkraft: user?.name || "",
+        ort: item.ort || "",
+        notiz: item.notiz || "",
+        erinnerung: false,
+        status: "geplant",
+        import_source: item.import_source || "ics",
+        external_uid: item.external_uid || null,
+        created_by: session.user.id,
+      }));
+    const skipped = Math.max(0, (items || []).length - rows.length);
+    if (!rows.length) return { imported: 0, skipped };
+    const { data, error } = await supabase.from("termine").insert(rows).select("*");
+    if (error) {
+      showToast(`Import fehlgeschlagen: ${error.message}`, "#c0392b");
+      return { imported: 0, skipped: (items || []).length };
+    }
+    setTermine(prev => [...prev, ...(data || []).map(mapTermin)]);
+    await loadAuditLogs(visibleClients.map(c => c.id));
+    showToast(`${data?.length || 0} Termine importiert ✓${skipped ? ` · ${skipped} Duplikate übersprungen` : ""}`);
+    return { imported: data?.length || 0, skipped };
   };
 
   const syncOutlookTermin = async (terminId) => {
@@ -1167,7 +1254,7 @@ function AppContent() {
             )}
             {view === "detail" && selectedClient && !canViewClient(selectedClient.id) && <AccessDeniedView setView={setView} />}
             {view === "notizen" && <NotizenView notizen={visibleNotizen} onAdd={addNotiz} onUpdate={updateNotiz} onDelete={deleteNotiz} user={user} clients={visibleClients} showToast={showToast} />}
-            {view === "kalender" && <KalenderView termine={visibleTermine} outlookConnection={outlookConnection} outlookEvents={outlookEvents} outlookEventsLoading={outlookEventsLoading} outlookEventsError={outlookEventsError} outlookRelevantOnly={outlookRelevantOnly} setOutlookRelevantOnly={setOutlookRelevantOnly} onLoadOutlookEvents={(relevantOnly = outlookRelevantOnly) => loadOutlookEvents(relevantOnly, false)} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} onConnectOutlook={startOutlookConnect} onRefreshOutlook={refreshOutlookStatus} onSyncOutlookTermin={syncOutlookTermin} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} />}
+            {view === "kalender" && <KalenderView termine={visibleTermine} outlookConnection={outlookConnection} outlookEvents={outlookEvents} outlookEventsLoading={outlookEventsLoading} outlookEventsError={outlookEventsError} outlookRelevantOnly={outlookRelevantOnly} setOutlookRelevantOnly={setOutlookRelevantOnly} onLoadOutlookEvents={(relevantOnly = outlookRelevantOnly) => loadOutlookEvents(relevantOnly, false)} onImportTermine={importTermine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} onConnectOutlook={startOutlookConnect} onRefreshOutlook={refreshOutlookStatus} onSyncOutlookTermin={syncOutlookTermin} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} />}
             {view === "benachrichtigungen" && <BenachrichtigungenView termine={visibleTermine} clients={visibleClients} setView={setView} setSelectedClient={setSelectedClient} />}
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
             {view === "stunden" && <StundenView clients={visibleClients} eintraege={eintraege} />}
@@ -2432,12 +2519,18 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
   );
 }
 
-function KalenderView({ termine, outlookConnection, outlookEvents, outlookEventsLoading, outlookEventsError, outlookRelevantOnly, setOutlookRelevantOnly, onLoadOutlookEvents, onAddTermin, onDeleteTermin, onUpdateTerminStatus, onConnectOutlook, onRefreshOutlook, onSyncOutlookTermin, canEditTermin, clients, user, showToast }) {
+function KalenderView({ termine, outlookConnection, outlookEvents, outlookEventsLoading, outlookEventsError, outlookRelevantOnly, setOutlookRelevantOnly, onLoadOutlookEvents, onImportTermine, onAddTermin, onDeleteTermin, onUpdateTerminStatus, onConnectOutlook, onRefreshOutlook, onSyncOutlookTermin, canEditTermin, clients, user, showToast }) {
   const [showNew, setShowNew] = useState(false);
   const initialTerminForm = { titel: "", datum: ds(new Date()), uhrzeit: "09:00", klientId: "", fachkraft: user?.name || "", ort: "", notiz: "", erinnerung: false, outlookSync: false };
   const [form, setForm] = useState(initialTerminForm);
   const [saving, setSaving] = useState(false);
+  const [importPreview, setImportPreview] = useState([]);
+  const [selectedImportIds, setSelectedImportIds] = useState([]);
+  const [importFileName, setImportFileName] = useState("");
+  const [importError, setImportError] = useState("");
+  const [importing, setImporting] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
+  const importFileRef = useRef(null);
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const today = ds(new Date());
   const sorted = [...termine].sort((a, b) => new Date(`${a.datum}T${a.uhrzeit || "00:00"}`) - new Date(`${b.datum}T${b.uhrzeit || "00:00"}`));
@@ -2446,6 +2539,43 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   const future = openTermine.filter(t => t.datum >= today);
   const past = openTermine.filter(t => t.datum < today);
   const getKlient = (id) => clients.find(c => c.id == id);
+  const existingUidSet = new Set(termine.map(t => t.external_uid).filter(Boolean));
+  const existingKeySet = new Set(termine.map(terminImportKey));
+  const markDuplicates = (items) => items.map(item => ({
+    ...item,
+    duplicate: Boolean((item.external_uid && existingUidSet.has(item.external_uid)) || existingKeySet.has(terminImportKey(item))),
+  }));
+  const handleIcsFile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setImportFileName(file.name);
+    setImportError("");
+    try {
+      const text = await file.text();
+      const parsed = markDuplicates(parseIcsCalendar(text));
+      setImportPreview(parsed);
+      setSelectedImportIds(parsed.filter(item => !item.duplicate).map(item => item.importId));
+      if (!parsed.length) setImportError("In der ICS-Datei wurden keine importierbaren Termine gefunden.");
+    } catch (error) {
+      setImportPreview([]);
+      setSelectedImportIds([]);
+      setImportError(error.message || "ICS-Datei konnte nicht gelesen werden.");
+    } finally {
+      event.target.value = "";
+    }
+  };
+  const confirmImport = async () => {
+    const selected = importPreview.filter(item => selectedImportIds.includes(item.importId) && !item.duplicate);
+    if (!selected.length) return showToast("Bitte mindestens einen nicht vorhandenen Termin auswählen.", "#c0392b");
+    setImporting(true);
+    const result = await onImportTermine(selected.map(item => ({ ...item, import_source: `ics:${importFileName || "kalender"}` })));
+    setImporting(false);
+    if (result?.imported) {
+      setImportPreview([]);
+      setSelectedImportIds([]);
+      setImportFileName("");
+    }
+  };
   const outlookStatusLine = (
     <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
       <span style={{ ...statusChipStyle, background: outlookConnection?.connected ? "#ecfdf5" : "#f8fafc", borderColor: outlookConnection?.connected ? "#bbf7d0" : "#e2e8f0", color: outlookConnection?.connected ? "#166534" : "#64748b" }}>
@@ -2472,6 +2602,8 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
         <div><IconHeading icon="termine" level="h1" style={pageTitle}>Kalender & Termine</IconHeading><p style={pageSubtitle}>{future.length} anstehende Termine · {completedTermine.length} erledigt ausgeblendet</p>{outlookStatusLine}</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <input ref={importFileRef} type="file" accept=".ics,text/calendar" onChange={handleIcsFile} style={{ display: "none" }} />
+          <button onClick={() => importFileRef.current?.click()} style={btnSecondary}>Kalender importieren</button>
           <button onClick={onConnectOutlook} style={btnSecondary}>Outlook verbinden</button>
           <button onClick={() => setShowCompleted(p => !p)} style={btnSecondary}>{showCompleted ? "Erledigte ausblenden" : "Erledigte Termine anzeigen"}</button>
           <button onClick={() => setShowNew(true)} style={btnPrimary}>+ Neuer Termin</button>
@@ -2533,6 +2665,43 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
           })}
         </div>
       </div>
+      {(importPreview.length > 0 || importError) && (
+        <div style={{ ...card, marginTop: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+            <div>
+              <IconHeading icon="termine">Import-Vorschau</IconHeading>
+              <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: 13 }}>{importFileName || "ICS-Datei"} · {importPreview.length} gefundene Termine</p>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button type="button" onClick={() => { setImportPreview([]); setSelectedImportIds([]); setImportError(""); setImportFileName(""); }} style={btnSecondary}>Verwerfen</button>
+              {importPreview.length > 0 && <button type="button" disabled={importing} onClick={confirmImport} style={{ ...btnPrimary, opacity: importing ? .7 : 1 }}>{importing ? "Importiert…" : "Ausgewählte übernehmen"}</button>}
+            </div>
+          </div>
+          {importError && <p style={{ margin: 0, color: "#991b1b", fontSize: 13 }}>{importError}</p>}
+          {importPreview.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {importPreview.map(item => (
+                <label key={item.importId} style={{ display: "grid", gridTemplateColumns: "auto 110px 1fr", gap: 12, alignItems: "flex-start", padding: "10px 0", borderTop: "1px solid #f1f5f9", opacity: item.duplicate ? .6 : 1 }}>
+                  <input type="checkbox" checked={selectedImportIds.includes(item.importId)} disabled={item.duplicate} onChange={e => setSelectedImportIds(prev => e.target.checked ? [...prev, item.importId] : prev.filter(id => id !== item.importId))} style={{ marginTop: 3 }} />
+                  <div>
+                    <p style={{ margin: 0, color: "#1f2937", fontSize: 13, fontWeight: 800 }}>{formatDate(item.datum)}</p>
+                    <p style={{ margin: "3px 0 0", color: "#64748b", fontSize: 12 }}>{item.allDay ? "ganztägig" : item.uhrzeit || "–"}</p>
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <p style={{ ...recordTitleStyle, margin: 0 }}>{item.titel}</p>
+                      {item.duplicate && <span style={{ ...statusChipStyle, background: "#f8fafc", borderColor: "#cbd5e1", color: "#64748b" }}>Duplikat</span>}
+                    </div>
+                    {item.ort && <p style={{ ...recordMetaStyle, marginTop: 4 }}>{item.ort}</p>}
+                    {item.notiz && <p style={{ ...recordTextStyle, marginTop: 6 }}>{item.notiz.length > 160 ? `${item.notiz.slice(0, 160)}…` : item.notiz}</p>}
+                    {item.external_uid && <p style={{ ...recordMetaStyle, marginTop: 5 }}>UID: {item.external_uid}</p>}
+                  </div>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {showCompleted && (
         <div style={{ ...card, marginTop: 20 }}>
           <IconHeading icon="termine">Erledigte Termine</IconHeading>
