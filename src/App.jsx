@@ -264,8 +264,11 @@ function AppContent() {
   const [clientInternFilter, setClientInternFilter] = useState("alle");
   const [newEintrag, setNewEintrag] = useState(null);
   const speechRecognitionRef = useRef(null);
+  const dictationManuallyStoppedRef = useRef(false);
   const [dictating, setDictating] = useState(false);
+  const [dictationStatus, setDictationStatus] = useState("gestoppt");
   const [dictationNotice, setDictationNotice] = useState("");
+  const [dictationInterim, setDictationInterim] = useState("");
   const [kiCorrecting, setKiCorrecting] = useState(false);
   const [kiCorrection, setKiCorrection] = useState(null);
   const [showNewClient, setShowNewClient] = useState(false);
@@ -574,6 +577,7 @@ function AppContent() {
   }, [session, user]);
 
   useEffect(() => () => {
+    dictationManuallyStoppedRef.current = true;
     if (speechRecognitionRef.current) speechRecognitionRef.current.stop();
   }, []);
 
@@ -618,27 +622,38 @@ function AppContent() {
   };
 
   const appendDictationText = (text) => {
+    const cleanText = (text || "").trim();
+    if (!cleanText) return;
+    setKiCorrection(null);
     setNewEintrag(prev => {
       if (!prev) return prev;
       const current = prev.text || "";
       const separator = current.trim() ? " " : "";
-      return { ...prev, text: `${current}${separator}${text}` };
+      return { ...prev, text: `${current}${separator}${cleanText}` };
     });
   };
 
-  const startDictation = () => {
+  const startDictation = (resume = false) => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
+      setDictationStatus("nicht_unterstuetzt");
       setDictationNotice("Spracheingabe wird von diesem Browser nicht unterstützt.");
+      setDictationInterim("");
       return;
     }
 
-    if (speechRecognitionRef.current) speechRecognitionRef.current.stop();
+    if (dictating) return;
+    if (speechRecognitionRef.current) {
+      dictationManuallyStoppedRef.current = true;
+      speechRecognitionRef.current.stop();
+      speechRecognitionRef.current = null;
+    }
 
     const recognition = new SpeechRecognition();
     recognition.lang = "de-DE";
     recognition.continuous = true;
     recognition.interimResults = true;
+    dictationManuallyStoppedRef.current = false;
 
     recognition.onresult = (event) => {
       let finalText = "";
@@ -649,27 +664,67 @@ function AppContent() {
         else interimText += transcript;
       }
       if (finalText.trim()) appendDictationText(finalText.trim());
+      setDictationInterim(interimText.trim());
       setDictationNotice(interimText.trim()
         ? `Zwischenergebnis: ${interimText.trim()}`
-        : "Diktat läuft. Erkannter Text wird in die Beschreibung übernommen.");
+        : "Diktat läuft. Erkannter Text wird fortlaufend angehängt.");
     };
 
     recognition.onerror = (event) => {
       setDictating(false);
-      setDictationNotice(`Spracheingabe konnte nicht fortgesetzt werden: ${event.error || "unbekannter Fehler"}.`);
+      speechRecognitionRef.current = null;
+      setDictationInterim("");
+      if (event.error === "no-speech" || event.error === "aborted") {
+        setDictationStatus("pausiert");
+        setDictationNotice("Diktat pausiert. Der bisherige Text bleibt erhalten; du kannst weiter diktieren.");
+        return;
+      }
+      setDictationStatus(event.error === "not-allowed" ? "gestoppt" : "pausiert");
+      setDictationNotice(`Spracheingabe konnte nicht fortgesetzt werden: ${event.error || "unbekannter Fehler"}. Der bisherige Text bleibt erhalten.`);
     };
-    recognition.onend = () => setDictating(false);
+    recognition.onend = () => {
+      setDictating(false);
+      speechRecognitionRef.current = null;
+      setDictationInterim("");
+      if (dictationManuallyStoppedRef.current) {
+        setDictationStatus("gestoppt");
+        setDictationNotice("Diktat gestoppt. Der bisherige Text bleibt erhalten.");
+      } else {
+        setDictationStatus("pausiert");
+        setDictationNotice("Diktat pausiert. Der bisherige Text bleibt erhalten; du kannst weiter diktieren.");
+      }
+    };
 
     speechRecognitionRef.current = recognition;
     setDictating(true);
-    setDictationNotice("Diktat läuft. Bitte Mikrofonzugriff im Browser erlauben.");
-    recognition.start();
+    setDictationStatus("laeuft");
+    setDictationInterim("");
+    setDictationNotice(resume ? "Diktat läuft weiter. Neuer Text wird angehängt." : "Diktat läuft. Neuer Text wird an den vorhandenen Text angehängt.");
+    try {
+      recognition.start();
+    } catch (error) {
+      setDictating(false);
+      setDictationStatus("gestoppt");
+      setDictationNotice(error.message || "Diktat konnte nicht gestartet werden. Der bisherige Text bleibt erhalten.");
+    }
   };
 
   const stopDictation = () => {
+    dictationManuallyStoppedRef.current = true;
     if (speechRecognitionRef.current) speechRecognitionRef.current.stop();
     setDictating(false);
-    setDictationNotice("Diktat gestoppt.");
+    speechRecognitionRef.current = null;
+    setDictationStatus("gestoppt");
+    setDictationInterim("");
+    setDictationNotice("Diktat gestoppt. Der bisherige Text bleibt erhalten.");
+  };
+
+  const clearDictationText = () => {
+    setNewEintrag(prev => prev ? { ...prev, text: "" } : prev);
+    setKiCorrection(null);
+    setDictationInterim("");
+    setDictationStatus(dictating ? "laeuft" : "gestoppt");
+    setDictationNotice("Dokumentationstext geleert.");
   };
 
   const runDocumentationCorrection = async () => {
@@ -857,15 +912,22 @@ function AppContent() {
   };
 
   const openNewEintrag = () => {
+    dictationManuallyStoppedRef.current = true;
+    setDictationStatus("gestoppt");
     setDictationNotice("");
+    setDictationInterim("");
     setKiCorrection(null);
     setNewEintrag({ typ: "Fallverlauf", titel: "", text: "", datum: ds(new Date()), fachkraft: user?.name || "", stunden: "" });
   };
 
   const closeNewEintrag = () => {
+    dictationManuallyStoppedRef.current = true;
     if (speechRecognitionRef.current) speechRecognitionRef.current.stop();
     setDictating(false);
+    speechRecognitionRef.current = null;
+    setDictationStatus("gestoppt");
     setDictationNotice("");
+    setDictationInterim("");
     setKiCorrection(null);
     setNewEintrag(null);
   };
@@ -918,6 +980,13 @@ function AppContent() {
 
   const speechSupported = typeof window !== "undefined" && (window.SpeechRecognition || window.webkitSpeechRecognition);
   const selectedClientCanEdit = selectedClient ? canEditClientContent(selectedClient.id) : false;
+  const dictationStatusMeta = !speechSupported
+    ? { label: "Browser unterstützt Spracheingabe nicht", bg: "#f8fafc", color: "#475569", border: "#cbd5e1" }
+    : dictating
+      ? { label: "Diktat läuft", bg: "#eef6ff", color: "#1e3a5f", border: "#bfdbfe" }
+      : dictationStatus === "pausiert"
+        ? { label: "pausiert", bg: "#f8fafc", color: "#334155", border: "#cbd5e1" }
+        : { label: "gestoppt", bg: "#f8fafc", color: "#64748b", border: "#e2e8f0" };
 
   return (
     <>
@@ -1016,19 +1085,36 @@ function AppContent() {
           <FormField label="Beschreibung">
             <textarea rows={5} value={newEintrag.text} onChange={e => { setKiCorrection(null); setNewEintrag({ ...newEintrag, text: e.target.value }); }} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.6 }} placeholder="Details…" />
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-              <button type="button" onClick={dictating ? stopDictation : startDictation} style={dictating ? { ...btnPrimary, background: "#475569", borderColor: "#475569" } : btnSecondary}>
-                {dictating ? "Diktieren stoppen" : "Diktieren starten"}
-              </button>
+              {speechSupported && dictating && (
+                <button type="button" onClick={stopDictation} style={{ ...btnPrimary, background: "#475569", borderColor: "#475569" }}>Diktieren stoppen</button>
+              )}
+              {speechSupported && !dictating && dictationStatus === "pausiert" && (
+                <button type="button" onClick={() => startDictation(true)} style={btnPrimary}>Weiter diktieren</button>
+              )}
+              {speechSupported && !dictating && dictationStatus !== "pausiert" && (
+                <button type="button" onClick={() => startDictation(false)} style={btnSecondary}>Diktieren starten</button>
+              )}
+              {newEintrag.text?.trim() && (
+                <button type="button" onClick={clearDictationText} style={btnSecondary}>Text leeren</button>
+              )}
               <button type="button" onClick={runDocumentationCorrection} disabled={kiCorrecting} style={{ ...btnSecondary, opacity: kiCorrecting ? .65 : 1, cursor: kiCorrecting ? "wait" : "pointer" }}>
                 {kiCorrecting ? "KI prüft…" : "Rechtschreibung & Grammatik prüfen"}
               </button>
             </div>
-            {!speechSupported && (
-              <p style={{ margin: "8px 0 0", color: "#64748b", fontSize: 12, lineHeight: 1.5 }}>Spracheingabe wird von diesem Browser nicht unterstützt. Der Text kann weiterhin manuell erfasst werden.</p>
-            )}
-            {dictationNotice && (
-              <p style={{ margin: "8px 0 0", color: dictating ? "#1e3a5f" : "#64748b", fontSize: 12, lineHeight: 1.5 }}>{dictationNotice}</p>
-            )}
+            <div style={{ marginTop: 10, border: "1px solid #e2e8f0", borderRadius: 8, background: "#f8fafc", padding: "10px 12px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: "#475569", textTransform: "uppercase", letterSpacing: ".4px" }}>Spracheingabe</span>
+                <span style={{ background: dictationStatusMeta.bg, color: dictationStatusMeta.color, border: `1px solid ${dictationStatusMeta.border}`, borderRadius: 999, padding: "3px 9px", fontSize: 11, fontWeight: 700 }}>{dictationStatusMeta.label}</span>
+              </div>
+              <p style={{ margin: "7px 0 0", color: "#64748b", fontSize: 12, lineHeight: 1.5 }}>
+                {!speechSupported
+                  ? "Spracheingabe wird von diesem Browser nicht unterstützt. Der Text kann weiterhin manuell erfasst werden."
+                  : dictationNotice || "Neuer diktierter Text wird an den vorhandenen Dokumentationstext angehängt."}
+              </p>
+              {dictationInterim && (
+                <p style={{ margin: "5px 0 0", color: "#334155", fontSize: 12, lineHeight: 1.5, fontStyle: "italic" }}>{dictationInterim}</p>
+              )}
+            </div>
             {kiCorrection && (
               <div style={{ marginTop: 12, border: "1px solid #cbd5e1", borderRadius: 8, background: "#f8fafc", padding: "12px 14px" }}>
                 <p style={{ margin: "0 0 8px", color: "#334155", fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>KI-Vorschlag, Original bleibt oben bearbeitbar</p>
