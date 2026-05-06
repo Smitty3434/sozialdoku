@@ -818,6 +818,7 @@ function AppContent() {
   // ── CRUD: Termine ───────────────────────────────────────────────
   const addTermin = async (termin) => {
     if (termin.klientId && !canEditClientContent(termin.klientId)) return deny("Du darfst für diese Fallakte keinen Termin anlegen.");
+    const wantsOutlookSync = Boolean(termin.outlookSync);
     const { data, error } = await supabase.from("termine").insert([{
       titel: termin.titel,
       datum: termin.datum,
@@ -828,16 +829,48 @@ function AppContent() {
       notiz: termin.notiz || "",
       erinnerung: Boolean(termin.erinnerung),
       status: "geplant",
+      outlook_sync_requested: wantsOutlookSync,
+      outlook_sync_status: wantsOutlookSync ? "pending" : "none",
       created_by: session.user.id,
     }]).select().single();
     if (data) {
       setTermine(prev => [...prev, mapTermin(data)]);
       await loadAuditLogs(visibleClients.map(c => c.id));
       showToast("Termin gespeichert ✓");
+      if (wantsOutlookSync) await syncOutlookTermin(data.id);
       return true;
     }
     if (error) showToast(`Termin konnte nicht gespeichert werden: ${error.message}`, "#c0392b");
     return false;
+  };
+
+  const syncOutlookTermin = async (terminId) => {
+    const { data, error } = await supabase.functions.invoke("outlook-sync-event", {
+      body: { terminId },
+    });
+    if (data?.termin) {
+      setTermine(prev => prev.map(t => String(t.id) === String(terminId) ? mapTermin(data.termin) : t));
+    }
+    if (error || data?.error) {
+      showToast(data?.error || error?.message || "Outlook-Synchronisation fehlgeschlagen.", "#c0392b");
+      return false;
+    }
+    showToast("Termin in Outlook angelegt ✓");
+    return true;
+  };
+
+  const startOutlookConnect = async () => {
+    const { data, error } = await supabase.functions.invoke("outlook-connect", { body: {} });
+    if (error || data?.error) {
+      showToast(data?.error || error?.message || "Outlook-Verbindung ist noch nicht konfiguriert.", "#c0392b");
+      return;
+    }
+    if (data?.authUrl) {
+      window.open(data.authUrl, "_blank", "noopener,noreferrer");
+      showToast("Outlook-Verbindung im neuen Fenster geöffnet ✓");
+      return;
+    }
+    showToast("Outlook-Verbindung ist serverseitig vorbereitet, aber noch nicht konfiguriert.", "#64748b");
   };
 
   const updateTerminStatus = async (id, status) => {
@@ -1097,7 +1130,7 @@ function AppContent() {
             )}
             {view === "detail" && selectedClient && !canViewClient(selectedClient.id) && <AccessDeniedView setView={setView} />}
             {view === "notizen" && <NotizenView notizen={visibleNotizen} onAdd={addNotiz} onUpdate={updateNotiz} onDelete={deleteNotiz} user={user} clients={visibleClients} showToast={showToast} />}
-            {view === "kalender" && <KalenderView termine={visibleTermine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} />}
+            {view === "kalender" && <KalenderView termine={visibleTermine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} onConnectOutlook={startOutlookConnect} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} />}
             {view === "benachrichtigungen" && <BenachrichtigungenView termine={visibleTermine} clients={visibleClients} setView={setView} setSelectedClient={setSelectedClient} />}
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
             {view === "stunden" && <StundenView clients={visibleClients} eintraege={eintraege} />}
@@ -1648,6 +1681,19 @@ const auditEntityLabel = (entity) => ({
   fallakten_freigaben: "Fallaktenfreigabe",
   nutzer: "Benutzer",
 }[entity] || entity);
+
+function OutlookSyncBadge({ termin }) {
+  const status = termin.outlook_sync_status || "none";
+  if (status === "none" && !termin.outlook_sync_requested) {
+    return <span style={{ ...statusChipStyle, background: "#f8fafc", borderColor: "#e2e8f0", color: "#64748b" }}>Nicht mit Outlook synchronisiert</span>;
+  }
+  const tone = {
+    pending: { bg: "#f8fafc", border: "#cbd5e1", color: "#475569", label: "Outlook ausstehend" },
+    synced: { bg: "#ecfdf5", border: "#bbf7d0", color: "#166534", label: "Mit Outlook synchronisiert" },
+    failed: { bg: "#fff1f2", border: "#fecdd3", color: "#991b1b", label: "Outlook fehlgeschlagen" },
+  }[status] || { bg: "#f8fafc", border: "#e2e8f0", color: "#64748b", label: "Outlook nicht synchronisiert" };
+  return <span title={termin.outlook_sync_error || ""} style={{ ...statusChipStyle, background: tone.bg, borderColor: tone.border, color: tone.color }}>{tone.label}</span>;
+}
 
 function AuditLogList({ logs, users, user }) {
   const visibleLogs = (logs || []).slice(0, 8);
@@ -2349,9 +2395,10 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
   );
 }
 
-function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStatus, canEditTermin, clients, user, showToast }) {
+function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStatus, onConnectOutlook, canEditTermin, clients, user, showToast }) {
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ titel: "", datum: ds(new Date()), uhrzeit: "09:00", klientId: "", fachkraft: user?.name || "", ort: "", notiz: "", erinnerung: false });
+  const initialTerminForm = { titel: "", datum: ds(new Date()), uhrzeit: "09:00", klientId: "", fachkraft: user?.name || "", ort: "", notiz: "", erinnerung: false, outlookSync: false };
+  const [form, setForm] = useState(initialTerminForm);
   const [saving, setSaving] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -2380,6 +2427,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
         <div><IconHeading icon="termine" level="h1" style={pageTitle}>Kalender & Termine</IconHeading><p style={pageSubtitle}>{future.length} anstehende Termine · {completedTermine.length} erledigt ausgeblendet</p></div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={onConnectOutlook} style={btnSecondary}>Outlook verbinden</button>
           <button onClick={() => setShowCompleted(p => !p)} style={btnSecondary}>{showCompleted ? "Erledigte ausblenden" : "Erledigte Termine anzeigen"}</button>
           <button onClick={() => setShowNew(true)} style={btnPrimary}>+ Neuer Termin</button>
         </div>
@@ -2408,6 +2456,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
                     <p style={{ margin: "3px 0", fontSize: 12, color: "#64748b" }}>🕐 {t.uhrzeit} · 📍 {t.ort}</p>
                     {k && <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}>👤 {k.name}</p>}
                     {t.erinnerung && <span style={{ fontSize: 11, color: "#f59e0b" }}>🔔 Erinnerung aktiv</span>}
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}><OutlookSyncBadge termin={t} /></div>
                     <TerminAuditLine termin={t} />
                   </div>
                   <button onClick={() => onDeleteTermin(t.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 18, padding: 4 }}>✕</button>
@@ -2427,6 +2476,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
                 <StatusControl termin={t} />
               </div>
               <p style={{ margin: "2px 0", fontSize: 11, color: "#94a3b8" }}>{formatDate(t.datum)} {t.uhrzeit} {k ? `· ${k.name}` : ""}</p>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}><OutlookSyncBadge termin={t} /></div>
               <TerminAuditLine termin={t} />
             </div>;
           })}
@@ -2443,6 +2493,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
                 <div style={{ minWidth: 0 }}>
                   <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#1e293b" }}>{t.titel}</p>
                   <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{formatDate(t.datum)} {t.uhrzeit}{k ? ` · ${k.name}` : ""}{t.ort ? ` · ${t.ort}` : ""}</p>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}><OutlookSyncBadge termin={t} /></div>
                   <TerminAuditLine termin={t} />
                 </div>
                 <StatusControl termin={t} />
@@ -2466,6 +2517,13 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
             <input type="checkbox" checked={form.erinnerung} onChange={e => set("erinnerung", e.target.checked)} style={{ width: 16, height: 16 }} />
             🔔 Erinnerung aktivieren (3 Tage vorher)
           </label>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", marginBottom: 20, fontFamily: "'DM Sans',sans-serif", fontSize: 14, color: "#334155", background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 8, padding: "11px 12px" }}>
+            <input type="checkbox" checked={form.outlookSync} onChange={e => set("outlookSync", e.target.checked)} style={{ width: 16, height: 16, marginTop: 2 }} />
+            <span>
+              <strong style={{ display: "block", color: "#1f2937", marginBottom: 2 }}>Auch in Outlook speichern</strong>
+              <span style={{ color: "#64748b", fontSize: 12, lineHeight: 1.5 }}>Phase 1: Der Termin wird zuerst in der App gespeichert und danach serverseitig an Outlook übergeben, sobald dein Outlook-Konto verbunden ist.</span>
+            </span>
+          </label>
           <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
             <button onClick={() => setShowNew(false)} style={btnSecondary}>Abbrechen</button>
             <button disabled={saving} onClick={async () => {
@@ -2475,7 +2533,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
               setSaving(false);
               if (!saved) return;
               setShowNew(false);
-              setForm({ titel: "", datum: ds(new Date()), uhrzeit: "09:00", klientId: "", fachkraft: user?.name || "", ort: "", notiz: "", erinnerung: false });
+              setForm({ ...initialTerminForm, fachkraft: user?.name || "" });
             }} style={{ ...btnPrimary, opacity: saving ? .7 : 1 }}>{saving ? "Speichert…" : "Speichern"}</button>
           </div>
         </Modal>
