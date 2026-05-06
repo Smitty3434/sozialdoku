@@ -60,6 +60,8 @@ const NOTIZ_FARBEN = {
   blau:  { bg: "#eff6ff", border: "#1d4ed8", label: "Blau" },
   lila:  { bg: "#f5f3ff", border: "#6d28d9", label: "Lila" },
 };
+const AUFGABEN_STATUS = ["offen", "in_bearbeitung", "erledigt"];
+const TERMIN_STATUS = ["geplant", "erledigt", "abgesagt"];
 
 const FACHBEREICH_LABELS = {
   soziales: "Soziales",
@@ -138,7 +140,7 @@ const typeColor = () => "#475569";
 const typBg = () => "#f1f5f9";
 const rolleStyle = (r) => ROLLEN_FARBEN[r] || { bg: "#f1f5f9", color: "#475569" };
 const normalizeRole = (role) => ROLLEN.includes(role) ? role : "Fachkraft";
-const mapTermin = (t) => ({ ...t, klientId: t.klient_id, erinnerung: Boolean(t.erinnerung) });
+const mapTermin = (t) => ({ ...t, klientId: t.klient_id, erinnerung: Boolean(t.erinnerung), status: t.status || "geplant" });
 const dayDiff = (date, from = new Date()) => {
   const parsed = parseAppDate(date);
   if (!parsed) return Number.POSITIVE_INFINITY;
@@ -236,6 +238,9 @@ function AppContent() {
   const visibleClientIds = new Set(visibleClients.map(c => String(c.id)));
   const visibleTermine = termine.filter(t => !t.klientId || visibleClientIds.has(String(t.klientId)));
   const visibleNotizen = notizen.filter(n => !n.klientId || visibleClientIds.has(String(n.klientId)));
+  const canEditTermin = (termin) => termin?.klientId
+    ? canEditClientContent(termin.klientId)
+    : isAdmin || String(termin?.created_by) === String(user?.id);
   const permissions = {
     role,
     canViewAllCases: isAdmin || isLeitung,
@@ -657,6 +662,7 @@ function AppContent() {
       ort: termin.ort || "",
       notiz: termin.notiz || "",
       erinnerung: Boolean(termin.erinnerung),
+      status: "geplant",
       created_by: session.user.id,
     }]).select().single();
     if (data) {
@@ -666,6 +672,17 @@ function AppContent() {
     }
     if (error) showToast(`Termin konnte nicht gespeichert werden: ${error.message}`, "#c0392b");
     return false;
+  };
+
+  const updateTerminStatus = async (id, status) => {
+    if (!TERMIN_STATUS.includes(status)) return showToast("Ungültiger Terminstatus.", "#c0392b");
+    const existing = termine.find(t => String(t.id) === String(id));
+    if (!existing) return showToast("Termin wurde nicht gefunden.", "#c0392b");
+    if (!canEditTermin(existing)) return deny("Du darfst diesen Termin nicht bearbeiten.");
+    const { data, error } = await supabase.from("termine").update({ status }).eq("id", id).select().single();
+    if (error) return showToast(`Terminstatus konnte nicht gespeichert werden: ${error.message}`, "#c0392b");
+    setTermine(prev => prev.map(t => String(t.id) === String(id) ? mapTermin(data) : t));
+    showToast("Terminstatus aktualisiert ✓");
   };
 
   const deleteTermin = async (id) => {
@@ -794,6 +811,7 @@ function AppContent() {
 
   const upcomingReminders = visibleTermine.filter(t => {
     if (!t.erinnerung) return false;
+    if (t.status === "erledigt") return false;
     const diff = dayDiff(t.datum);
     return diff >= 0 && diff <= 3;
   });
@@ -882,7 +900,7 @@ function AppContent() {
             )}
             {view === "detail" && selectedClient && !canViewClient(selectedClient.id) && <AccessDeniedView setView={setView} />}
             {view === "notizen" && <NotizenView notizen={visibleNotizen} onAdd={addNotiz} onUpdate={updateNotiz} onDelete={deleteNotiz} user={user} clients={visibleClients} showToast={showToast} />}
-            {view === "kalender" && <KalenderView termine={visibleTermine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} clients={visibleClients} user={user} showToast={showToast} />}
+            {view === "kalender" && <KalenderView termine={visibleTermine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} />}
             {view === "benachrichtigungen" && <BenachrichtigungenView termine={visibleTermine} clients={visibleClients} setView={setView} setSelectedClient={setSelectedClient} />}
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
             {view === "stunden" && <StundenView clients={visibleClients} eintraege={eintraege} />}
@@ -1098,7 +1116,7 @@ function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelecte
   const getClientName = (id) => clients.find(c => c.id == id)?.name || "–";
   const getClientId = (entry) => entry.klientId || Object.entries(eintraege).find(([, v]) => v.some(e => e.id === entry.id))?.[0];
   const today = ds(new Date());
-  const nextTermine = [...termine].sort((a, b) => new Date(a.datum) - new Date(b.datum)).filter(t => t.datum >= today && (!t.klientId || dashboardClientIds.has(String(t.klientId)))).slice(0, 3);
+  const nextTermine = [...termine].sort((a, b) => new Date(a.datum) - new Date(b.datum)).filter(t => t.status !== "erledigt" && t.datum >= today && (!t.klientId || dashboardClientIds.has(String(t.klientId)))).slice(0, 3);
   const lastEntryByClient = Object.fromEntries(Object.entries(eintraege)
     .filter(([clientId]) => dashboardClientIds.has(String(clientId)))
     .map(([clientId, items]) => [clientId, [...(items || [])].sort((a, b) => new Date(b.datum) - new Date(a.datum))[0]?.datum || ""]));
@@ -1365,13 +1383,19 @@ function statusTone(value, type) {
   return type === "status" ? "active" : "neutral";
 }
 
-function CompactRecord({ title, meta, text, onDelete, status, statusType }) {
+function CompactRecord({ title, meta, text, onDelete, status, statusType, statusOptions = null, onStatusChange = null, statusDisabled = false }) {
   return (
     <div style={compactRecordStyle}>
       <div style={{ minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <p style={recordTitleStyle}>{title}</p>
-          <StatusChip value={status} type={statusType} />
+          {statusOptions ? (
+            <select value={status || statusOptions[0]} disabled={statusDisabled} onChange={e => onStatusChange?.(e.target.value)} style={{ ...statusSelectStyle, opacity: statusDisabled ? .55 : 1, cursor: statusDisabled ? "not-allowed" : "pointer" }}>
+              {statusOptions.map(option => <option key={option} value={option}>{option}</option>)}
+            </select>
+          ) : (
+            <StatusChip value={status} type={statusType} />
+          )}
         </div>
         {meta && <p style={recordMetaStyle}>{meta}</p>}
         {text && <p style={recordTextStyle}>{text}</p>}
@@ -1537,6 +1561,18 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
       if (error) return showToast("Interne Zuständigkeit konnte nicht gespeichert werden.", "#c0392b");
       patchAkte(cur => ({ ...cur, intern: [{ id: data.id, userId: nutzerId, name: payload.name || picked?.name || "", rolle: data.funktion || picked?.rolle || "", telefon: "", email: picked?.email || "" }, ...(cur.intern || [])] }));
     }
+  };
+
+  const updateAufgabeStatus = async (id, status) => {
+    if (!canEdit) return blockEdit();
+    if (!AUFGABEN_STATUS.includes(status)) return showToast("Ungültiger Aufgabenstatus.", "#c0392b");
+    const { data, error } = await supabase.from("aufgaben").update({ status }).eq("id", id).select().single();
+    if (error) return showToast(`Aufgabenstatus konnte nicht gespeichert werden: ${error.message}`, "#c0392b");
+    patchAkte(cur => ({
+      ...cur,
+      aufgaben: (cur.aufgaben || []).map(item => String(item.id) === String(id) ? { ...item, status: data?.status || status } : item),
+    }));
+    showToast("Aufgabenstatus aktualisiert ✓");
   };
 
   const addFachDoc = async (bereich) => {
@@ -1872,7 +1908,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
           </div>
           {(akte.aufgaben || []).length === 0 && <EmptyState>Noch keine Aufgaben erfasst.</EmptyState>}
           {(akte.aufgaben || []).length > 0 && filteredAufgaben.length === 0 && <EmptyState>Keine passenden Aufgaben gefunden.</EmptyState>}
-          {filteredAufgaben.map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={canDeleteRecords ? () => removeItem("aufgaben", item.id) : null} />)}
+          {filteredAufgaben.map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" statusOptions={AUFGABEN_STATUS} statusDisabled={!canEdit} onStatusChange={(status) => updateAufgabeStatus(item.id, status)} meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={canDeleteRecords ? () => removeItem("aufgaben", item.id) : null} />)}
         </AkteSection>
 
         <AkteSection sectionKey="extern" title="Zuständigkeit extern" open={openMap["extern"]} onToggle={toggleSection}>
@@ -2008,21 +2044,32 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
   );
 }
 
-function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, showToast }) {
+function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStatus, canEditTermin, clients, user, showToast }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ titel: "", datum: ds(new Date()), uhrzeit: "09:00", klientId: "", fachkraft: user?.name || "", ort: "", notiz: "", erinnerung: false });
   const [saving, setSaving] = useState(false);
+  const [showCompleted, setShowCompleted] = useState(false);
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const today = ds(new Date());
   const sorted = [...termine].sort((a, b) => new Date(`${a.datum}T${a.uhrzeit || "00:00"}`) - new Date(`${b.datum}T${b.uhrzeit || "00:00"}`));
-  const future = sorted.filter(t => t.datum >= today);
-  const past = sorted.filter(t => t.datum < today);
+  const openTermine = sorted.filter(t => t.status !== "erledigt");
+  const completedTermine = sorted.filter(t => t.status === "erledigt");
+  const future = openTermine.filter(t => t.datum >= today);
+  const past = openTermine.filter(t => t.datum < today);
   const getKlient = (id) => clients.find(c => c.id == id);
+  const StatusControl = ({ termin }) => (
+    <select value={termin.status || "geplant"} disabled={!canEditTermin?.(termin)} onChange={e => onUpdateTerminStatus?.(termin.id, e.target.value)} style={{ ...statusSelectStyle, opacity: canEditTermin?.(termin) ? 1 : .55, cursor: canEditTermin?.(termin) ? "pointer" : "not-allowed" }}>
+      {TERMIN_STATUS.map(status => <option key={status} value={status}>{status}</option>)}
+    </select>
+  );
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-        <div><IconHeading icon="termine" level="h1" style={pageTitle}>Kalender & Termine</IconHeading><p style={pageSubtitle}>{future.length} anstehende Termine</p></div>
-        <button onClick={() => setShowNew(true)} style={btnPrimary}>+ Neuer Termin</button>
+        <div><IconHeading icon="termine" level="h1" style={pageTitle}>Kalender & Termine</IconHeading><p style={pageSubtitle}>{future.length} anstehende Termine · {completedTermine.length} erledigt ausgeblendet</p></div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={() => setShowCompleted(p => !p)} style={btnSecondary}>{showCompleted ? "Erledigte ausblenden" : "Erledigte Termine anzeigen"}</button>
+          <button onClick={() => setShowNew(true)} style={btnPrimary}>+ Neuer Termin</button>
+        </div>
       </div>
       <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         <div style={card}>
@@ -2040,7 +2087,10 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, sho
                   <div style={{ flex: 1 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
                       <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: "#1e293b" }}>{t.titel}</p>
-                      {isToday && <span style={{ background: "#dbeafe", color: "#1d4ed8", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10 }}>Heute</span>}
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                        <StatusControl termin={t} />
+                        {isToday && <span style={{ background: "#dbeafe", color: "#1d4ed8", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10 }}>Heute</span>}
+                      </div>
                     </div>
                     <p style={{ margin: "3px 0", fontSize: 12, color: "#64748b" }}>🕐 {t.uhrzeit} · 📍 {t.ort}</p>
                     {k && <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}>👤 {k.name}</p>}
@@ -2058,12 +2108,33 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, sho
           {[...past].reverse().slice(0, 6).map(t => {
             const k = getKlient(t.klientId);
             return <div key={t.id} style={{ padding: "10px 0", borderBottom: "1px solid #f1f5f9", opacity: .7 }}>
-              <p style={{ margin: 0, fontWeight: 600, fontSize: 13, color: "#1e293b" }}>{t.titel}</p>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <p style={{ margin: 0, fontWeight: 600, fontSize: 13, color: "#1e293b" }}>{t.titel}</p>
+                <StatusControl termin={t} />
+              </div>
               <p style={{ margin: "2px 0", fontSize: 11, color: "#94a3b8" }}>{formatDate(t.datum)} {t.uhrzeit} {k ? `· ${k.name}` : ""}</p>
             </div>;
           })}
         </div>
       </div>
+      {showCompleted && (
+        <div style={{ ...card, marginTop: 20 }}>
+          <IconHeading icon="termine">Erledigte Termine</IconHeading>
+          {completedTermine.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine erledigten Termine vorhanden.</p>}
+          {[...completedTermine].reverse().map(t => {
+            const k = getKlient(t.klientId);
+            return (
+              <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "11px 0", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#1e293b" }}>{t.titel}</p>
+                  <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{formatDate(t.datum)} {t.uhrzeit}{k ? ` · ${k.name}` : ""}{t.ort ? ` · ${t.ort}` : ""}</p>
+                </div>
+                <StatusControl termin={t} />
+              </div>
+            );
+          })}
+        </div>
+      )}
       {showNew && (
         <Modal onClose={() => setShowNew(false)}>
           <h2 style={modalTitleStyle}><SectionIcon name={SECTION_ICONS.termine} />Neuen Termin anlegen</h2>
@@ -2099,7 +2170,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, sho
 
 function BenachrichtigungenView({ termine, clients, setView, setSelectedClient }) {
   const getKlient = (id) => clients.find(c => c.id == id);
-  const withDiff = termine.map(t => ({ ...t, diff: dayDiff(t.datum) })).sort((a, b) => a.diff - b.diff);
+  const withDiff = termine.filter(t => t.status !== "erledigt").map(t => ({ ...t, diff: dayDiff(t.datum) })).sort((a, b) => a.diff - b.diff);
   const upcoming = withDiff.filter(t => t.diff >= 0 && t.diff <= 7 && t.erinnerung);
   const overdue = withDiff.filter(t => t.diff < 0 && t.erinnerung);
   const all = withDiff.filter(t => t.diff >= 0).slice(0, 10);
@@ -3087,6 +3158,7 @@ const recordTitleStyle = { margin: 0, fontWeight: 700, fontSize: 14, color: "#11
 const recordMetaStyle = { margin: "4px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.45 };
 const recordTextStyle = { margin: "7px 0 0", fontSize: 13, color: "#374151", lineHeight: 1.7 };
 const statusChipStyle = { display: "inline-flex", alignItems: "center", minHeight: 22, border: "1px solid", borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, lineHeight: 1.2, whiteSpace: "nowrap" };
+const statusSelectStyle = { minHeight: 28, border: "1px solid #cbd5e1", borderRadius: 999, background: "#fff", color: "#334155", padding: "3px 28px 3px 10px", fontSize: 12, fontWeight: 700, fontFamily: "'DM Sans',sans-serif" };
 const chronoHeaderGridStyle = { display: "grid", gridTemplateColumns: "88px minmax(110px,.8fr) minmax(110px,.8fr) minmax(160px,1.6fr)", gap: 14, alignItems: "start" };
 const chronoLabelStyle = { display: "block", marginBottom: 3, fontSize: 10, color: "#94a3b8", textTransform: "uppercase", fontWeight: 800, letterSpacing: ".04em" };
 const chronoMetaValueStyle = { margin: 0, fontSize: 12, color: "#334155", lineHeight: 1.4, fontWeight: 700 };
