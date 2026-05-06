@@ -1127,22 +1127,31 @@ function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelecte
           </div>
         ))}
       </div>
+      <div style={{ ...card, marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 12 }}>
+          <div>
+            <h2 style={{ ...cardTitle, marginBottom: 3 }}>Klientensuche</h2>
+            <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>{permissions.canViewAllCases ? "Sichtbare Fallakten durchsuchen und eingrenzen." : "Meine Klienten durchsuchen und eingrenzen."}</p>
+          </div>
+          <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 700, paddingTop: 3 }}>{visibleDashboardClients.length} von {dashboardClients.length}</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 10, alignItems: "center" }}>
+          <input value={clientSearch} onChange={e => setClientSearch(e.target.value)} placeholder="Name oder Aktenzeichen suchen…" style={{ ...inputStyle, fontSize: 14, padding: "11px 13px" }} />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {[
+              { id: "alle", label: "Alle" },
+              { id: "aktiv", label: "Aktive" },
+              { id: "offene", label: "Offene Aufgaben" },
+              { id: "zuletzt", label: "Zuletzt bearbeitet" },
+            ].map(filter => (
+              <button key={filter.id} onClick={() => setClientQuickFilter(filter.id)} style={{ border: clientQuickFilter === filter.id ? "1px solid #64748b" : "1px solid #e2e8f0", background: clientQuickFilter === filter.id ? "#f1f5f9" : "#fff", color: clientQuickFilter === filter.id ? "#1e293b" : "#64748b", borderRadius: 999, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{filter.label}</button>
+            ))}
+          </div>
+        </div>
+      </div>
       <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         <div style={card}>
           <h2 style={cardTitle}>{permissions.canViewAllCases ? "Sichtbare Fallakten" : "Meine Klienten"}</h2>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, marginBottom: 12 }}>
-            <input value={clientSearch} onChange={e => setClientSearch(e.target.value)} placeholder="Meine Klienten suchen…" style={{ ...inputStyle, fontSize: 13, padding: "10px 12px" }} />
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {[
-                { id: "alle", label: "Alle" },
-                { id: "aktiv", label: "Aktive" },
-                { id: "offene", label: "Offene Aufgaben" },
-                { id: "zuletzt", label: "Zuletzt bearbeitet" },
-              ].map(filter => (
-                <button key={filter.id} onClick={() => setClientQuickFilter(filter.id)} style={{ border: clientQuickFilter === filter.id ? "1px solid #64748b" : "1px solid #e2e8f0", background: clientQuickFilter === filter.id ? "#f1f5f9" : "#fff", color: clientQuickFilter === filter.id ? "#1e293b" : "#64748b", borderRadius: 999, padding: "5px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{filter.label}</button>
-              ))}
-            </div>
-          </div>
           {dashboardClients.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine interne Zuständigkeit hinterlegt.</p>}
           {dashboardClients.length > 0 && visibleDashboardClients.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine passenden Klienten gefunden.</p>}
           {visibleDashboardClients.map(c => (
@@ -1844,22 +1853,23 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
             <input type="date" value={quickFields.aufgabeDatum} onChange={e => setQuickFields(p => ({ ...p, aufgabeDatum: e.target.value }))} style={inputStyle} />
             <button onClick={() => { if (!quickFields.aufgabe.trim()) return; addSimpleItem("aufgaben", { titel: quickFields.aufgabe, status: "offen", notiz: "", datum: quickFields.aufgabeDatum || ds(new Date()) }); setQuickFields(p => ({ ...p, aufgabe: "", aufgabeDatum: ds(new Date()) })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Hinzufügen</button>
           </div>}
-          {(akte.aufgaben || []).length > 0 && (
-            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 9, marginBottom: 12, padding: "10px 0", borderTop: "1px solid #f1f5f9", borderBottom: "1px solid #f1f5f9" }}>
-              <input value={taskSearch} onChange={e => setTaskSearch(e.target.value)} style={{ ...inputStyle, fontSize: 13, padding: "9px 11px" }} placeholder="Aufgaben nach Titel oder Beschreibung suchen…" />
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {[
-                  { id: "alle", label: "Alle" },
-                  { id: "offen", label: "Offen" },
-                  { id: "in_bearbeitung", label: "In Bearbeitung" },
-                  { id: "erledigt", label: "Erledigt" },
-                ].map(filter => (
-                  <button key={filter.id} onClick={() => setTaskStatusFilter(filter.id)} style={{ border: taskStatusFilter === filter.id ? "1px solid #64748b" : "1px solid #e2e8f0", background: taskStatusFilter === filter.id ? "#f1f5f9" : "#fff", color: taskStatusFilter === filter.id ? "#1e293b" : "#64748b", borderRadius: 999, padding: "5px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{filter.label}</button>
-                ))}
-                <span style={{ marginLeft: "auto", color: "#94a3b8", fontSize: 12, alignSelf: "center" }}>{filteredAufgaben.length} von {(akte.aufgaben || []).length}</span>
-              </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 9, marginBottom: 12, padding: "12px", border: "1px solid #e2e8f0", borderRadius: 8, background: "#f8fafc" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <p style={{ margin: 0, color: "#334155", fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px" }}>Aufgaben filtern</p>
+              <span style={{ color: "#94a3b8", fontSize: 12 }}>{filteredAufgaben.length} von {(akte.aufgaben || []).length}</span>
             </div>
-          )}
+            <input value={taskSearch} onChange={e => setTaskSearch(e.target.value)} style={{ ...inputStyle, fontSize: 13, padding: "9px 11px", background: "#fff" }} placeholder="Titel oder Beschreibung suchen…" />
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {[
+                { id: "alle", label: "Alle" },
+                { id: "offen", label: "offen" },
+                { id: "in_bearbeitung", label: "in_bearbeitung" },
+                { id: "erledigt", label: "erledigt" },
+              ].map(filter => (
+                <button key={filter.id} onClick={() => setTaskStatusFilter(filter.id)} style={{ border: taskStatusFilter === filter.id ? "1px solid #64748b" : "1px solid #e2e8f0", background: taskStatusFilter === filter.id ? "#e2e8f0" : "#fff", color: taskStatusFilter === filter.id ? "#1e293b" : "#64748b", borderRadius: 999, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{filter.label}</button>
+              ))}
+            </div>
+          </div>
           {(akte.aufgaben || []).length === 0 && <EmptyState>Noch keine Aufgaben erfasst.</EmptyState>}
           {(akte.aufgaben || []).length > 0 && filteredAufgaben.length === 0 && <EmptyState>Keine passenden Aufgaben gefunden.</EmptyState>}
           {filteredAufgaben.map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={canDeleteRecords ? () => removeItem("aufgaben", item.id) : null} />)}
