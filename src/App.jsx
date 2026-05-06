@@ -2534,10 +2534,8 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const today = ds(new Date());
   const sorted = [...termine].sort((a, b) => new Date(`${a.datum}T${a.uhrzeit || "00:00"}`) - new Date(`${b.datum}T${b.uhrzeit || "00:00"}`));
-  const openTermine = sorted.filter(t => t.status !== "erledigt");
-  const completedTermine = sorted.filter(t => t.status === "erledigt");
-  const future = openTermine.filter(t => t.datum >= today);
-  const past = openTermine.filter(t => t.datum < today);
+  const upcomingTermine = sorted.filter(t => t.datum >= today && t.status !== "erledigt" && t.status !== "abgesagt");
+  const archivedTermine = sorted.filter(t => t.datum < today || t.status === "erledigt" || t.status === "abgesagt");
   const getKlient = (id) => clients.find(c => c.id == id);
   const existingUidSet = new Set(termine.map(t => t.external_uid).filter(Boolean));
   const existingKeySet = new Set(termine.map(terminImportKey));
@@ -2600,70 +2598,49 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-        <div><IconHeading icon="termine" level="h1" style={pageTitle}>Kalender & Termine</IconHeading><p style={pageSubtitle}>{future.length} anstehende Termine · {completedTermine.length} erledigt ausgeblendet</p>{outlookStatusLine}</div>
+        <div><IconHeading icon="termine" level="h1" style={pageTitle}>Kalender & Termine</IconHeading><p style={pageSubtitle}>{upcomingTermine.length} anstehende Termine · {archivedTermine.length} vergangen / erledigt ausgeblendet</p>{outlookStatusLine}</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input ref={importFileRef} type="file" accept=".ics,text/calendar" onChange={handleIcsFile} style={{ display: "none" }} />
           <button onClick={() => importFileRef.current?.click()} style={btnSecondary}>Kalender importieren</button>
           <button onClick={onConnectOutlook} style={btnSecondary}>Outlook verbinden</button>
-          <button onClick={() => setShowCompleted(p => !p)} style={btnSecondary}>{showCompleted ? "Erledigte ausblenden" : "Erledigte Termine anzeigen"}</button>
+          <button onClick={() => setShowCompleted(p => !p)} style={btnSecondary}>{showCompleted ? "Vergangene / erledigte ausblenden" : "Vergangene / erledigte Termine anzeigen"}</button>
           <button onClick={() => setShowNew(true)} style={btnPrimary}>+ Neuer Termin</button>
         </div>
       </div>
-      <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        <div style={card}>
-          <IconHeading icon="termine">Anstehende Termine</IconHeading>
-          {future.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine Termine geplant.</p>}
-          {future.map(t => {
-            const k = getKlient(t.klientId); const isToday = t.datum === today;
-            return (
-              <div key={t.id} style={{ padding: "12px 0", borderBottom: "1px solid #f1f5f9" }}>
-                <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                  <div style={{ background: isToday ? "#dbeafe" : "#f0f3f8", borderRadius: 10, padding: "6px 10px", textAlign: "center", minWidth: 48 }}>
-                    <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: isToday ? "#1d4ed8" : "#1e293b" }}>{new Date(t.datum).getDate()}</p>
-                    <p style={{ margin: 0, fontSize: 10, color: "#64748b" }}>{new Date(t.datum).toLocaleDateString("de-DE", { month: "short" })}</p>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
-                      <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: "#1e293b" }}>{t.titel}</p>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                        <StatusControl termin={t} />
-                        {isToday && <span style={{ background: "#dbeafe", color: "#1d4ed8", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10 }}>Heute</span>}
-                      </div>
-                    </div>
-                    <p style={{ margin: "3px 0", fontSize: 12, color: "#64748b" }}>🕐 {t.uhrzeit} · 📍 {t.ort}</p>
-                    {k && <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}>👤 {k.name}</p>}
-                    {t.erinnerung && <span style={{ fontSize: 11, color: "#f59e0b" }}>🔔 Erinnerung aktiv</span>}
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
-                      <OutlookSyncBadge termin={t} />
-                      {canEditTermin?.(t) && t.outlook_sync_status !== "synced" && <button type="button" onClick={() => onSyncOutlookTermin?.(t.id)} style={{ ...btnSecondary, fontSize: 11, padding: "3px 8px" }}>Outlook synchronisieren</button>}
-                    </div>
-                    <TerminAuditLine termin={t} />
-                  </div>
-                  <button onClick={() => onDeleteTermin(t.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 18, padding: 4 }}>✕</button>
+      <div style={card}>
+        <IconHeading icon="termine">Anstehende Termine</IconHeading>
+        {upcomingTermine.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine anstehenden Termine geplant.</p>}
+        {upcomingTermine.map(t => {
+          const k = getKlient(t.klientId); const isToday = t.datum === today;
+          return (
+            <div key={t.id} style={{ padding: "12px 0", borderBottom: "1px solid #f1f5f9" }}>
+              <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                <div style={{ background: isToday ? "#dbeafe" : "#f0f3f8", borderRadius: 10, padding: "6px 10px", textAlign: "center", minWidth: 48 }}>
+                  <p style={{ margin: 0, fontSize: 17, fontWeight: 700, color: isToday ? "#1d4ed8" : "#1e293b" }}>{new Date(t.datum).getDate()}</p>
+                  <p style={{ margin: 0, fontSize: 10, color: "#64748b" }}>{new Date(t.datum).toLocaleDateString("de-DE", { month: "short" })}</p>
                 </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
+                    <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: "#1e293b" }}>{t.titel}</p>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <StatusControl termin={t} />
+                      {isToday && <span style={{ background: "#dbeafe", color: "#1d4ed8", fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10 }}>Heute</span>}
+                    </div>
+                  </div>
+                  <p style={{ margin: "3px 0", fontSize: 12, color: "#64748b" }}>🕐 {t.uhrzeit} · 📍 {t.ort}</p>
+                  {k && <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}>👤 {k.name}</p>}
+                  {t.erinnerung && <span style={{ fontSize: 11, color: "#f59e0b" }}>🔔 Erinnerung aktiv</span>}
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                    <OutlookSyncBadge termin={t} />
+                    {canEditTermin?.(t) && t.outlook_sync_status !== "synced" && <button type="button" onClick={() => onSyncOutlookTermin?.(t.id)} style={{ ...btnSecondary, fontSize: 11, padding: "3px 8px" }}>Outlook synchronisieren</button>}
+                  </div>
+                  <TerminAuditLine termin={t} />
+                </div>
+                <button onClick={() => onDeleteTermin(t.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 18, padding: 4 }}>✕</button>
               </div>
-            );
-          })}
-        </div>
-        <div style={card}>
-          <IconHeading icon="termine">Vergangene Termine</IconHeading>
-          {past.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine vergangenen Termine.</p>}
-          {[...past].reverse().slice(0, 6).map(t => {
-            const k = getKlient(t.klientId);
-            return <div key={t.id} style={{ padding: "10px 0", borderBottom: "1px solid #f1f5f9", opacity: .7 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <p style={{ margin: 0, fontWeight: 600, fontSize: 13, color: "#1e293b" }}>{t.titel}</p>
-                <StatusControl termin={t} />
-              </div>
-              <p style={{ margin: "2px 0", fontSize: 11, color: "#94a3b8" }}>{formatDate(t.datum)} {t.uhrzeit} {k ? `· ${k.name}` : ""}</p>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
-                <OutlookSyncBadge termin={t} />
-                {canEditTermin?.(t) && t.outlook_sync_status !== "synced" && <button type="button" onClick={() => onSyncOutlookTermin?.(t.id)} style={{ ...btnSecondary, fontSize: 11, padding: "3px 8px" }}>Outlook synchronisieren</button>}
-              </div>
-              <TerminAuditLine termin={t} />
-            </div>;
-          })}
-        </div>
+            </div>
+          );
+        })}
       </div>
       {(importPreview.length > 0 || importError) && (
         <div style={{ ...card, marginTop: 20 }}>
@@ -2704,9 +2681,9 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
       )}
       {showCompleted && (
         <div style={{ ...card, marginTop: 20 }}>
-          <IconHeading icon="termine">Erledigte Termine</IconHeading>
-          {completedTermine.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine erledigten Termine vorhanden.</p>}
-          {[...completedTermine].reverse().map(t => {
+          <IconHeading icon="termine">Vergangene / erledigte Termine</IconHeading>
+          {archivedTermine.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine vergangenen oder erledigten Termine vorhanden.</p>}
+          {[...archivedTermine].reverse().map(t => {
             const k = getKlient(t.klientId);
             return (
               <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "11px 0", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap" }}>
