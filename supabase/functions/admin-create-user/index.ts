@@ -72,6 +72,8 @@ Deno.serve(async (req) => {
       einrichtung,
       aktiv,
       avatar,
+      created_by: callerData.user.id,
+      updated_by: callerData.user.id,
     }, { onConflict: "id" })
     .select("*")
     .single();
@@ -90,4 +92,3 @@ function json(payload: unknown, status = 200) {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
-

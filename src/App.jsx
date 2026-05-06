@@ -136,11 +136,20 @@ const formatDate = (d) => {
   const parsed = parseAppDate(d);
   return parsed ? format(parsed, "dd.MM.yyyy", { locale: de }) : "–";
 };
+const formatDateTime = (d) => {
+  const parsed = parseAppDate(d);
+  return parsed ? format(parsed, "dd.MM.yyyy HH:mm", { locale: de }) : "–";
+};
 const typeColor = () => "#475569";
 const typBg = () => "#f1f5f9";
 const rolleStyle = (r) => ROLLEN_FARBEN[r] || { bg: "#f1f5f9", color: "#475569" };
 const normalizeRole = (role) => ROLLEN.includes(role) ? role : "Fachkraft";
 const mapTermin = (t) => ({ ...t, klientId: t.klient_id, erinnerung: Boolean(t.erinnerung), status: t.status || "geplant" });
+const resolveUserName = (id, users = [], currentUser = null, fallback = "Unbekannt") => {
+  if (!id) return fallback;
+  if (currentUser?.id && String(currentUser.id) === String(id)) return currentUser.name || fallback;
+  return users.find(u => String(u.id) === String(id))?.name || fallback;
+};
 const dayDiff = (date, from = new Date()) => {
   const parsed = parseAppDate(date);
   if (!parsed) return Number.POSITIVE_INFINITY;
@@ -253,6 +262,7 @@ function AppContent() {
   const [eintraege, setEintraege] = useState({});
   const [fallakten, setFallakten] = useState({});
   const [fallaktenFreigaben, setFallaktenFreigaben] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
   const [users, setUsers] = useState([]);
   const [termine, setTermine] = useState([]);
   const [notizen, setNotizen] = useState([]);
@@ -345,6 +355,21 @@ function AppContent() {
     return [...new Set([...assigned, ...granted])];
   };
 
+  const loadAuditLogs = async (ids = []) => {
+    const cleanIds = ids.filter(Boolean);
+    if (!cleanIds.length) {
+      setAuditLogs([]);
+      return;
+    }
+    const { data, error } = await supabase
+      .from("audit_log")
+      .select("*")
+      .in("klient_id", cleanIds)
+      .order("changed_at", { ascending: false })
+      .limit(400);
+    if (!error) setAuditLogs(data || []);
+  };
+
   const loadClients = async () => {
     let clientQuery = supabase.from("klienten").select("*").order("name");
     if (role === "Fachkraft") {
@@ -353,6 +378,7 @@ function AppContent() {
         setClients([]);
         setEintraege({});
         setFallakten({});
+        setAuditLogs([]);
         return;
       }
       clientQuery = clientQuery.in("id", allowedIds);
@@ -375,6 +401,7 @@ function AppContent() {
     if (!ids.length) {
       setEintraege({});
       setFallakten({});
+      setAuditLogs([]);
       return;
     }
 
@@ -416,7 +443,9 @@ function AppContent() {
         kontaktart: d.kontaktart || "",
         hashtags: d.hashtags || [],
         nachgetragen: Boolean(d.nachgetragen),
+        created_by: d.created_by,
         created_at: d.created_at,
+        updated_by: d.updated_by,
         updated_at: d.updated_at,
       });
 
@@ -434,7 +463,9 @@ function AppContent() {
             kontaktart: d.kontaktart || "",
             hashtags: d.hashtags || [],
             nachgetragen: Boolean(d.nachgetragen),
+            created_by: d.created_by,
             created_at: d.created_at,
+            updated_by: d.updated_by,
             updated_at: d.updated_at,
           },
           ...(byClient[d.klient_id].fachbereiche[key] || []),
@@ -450,6 +481,10 @@ function AppContent() {
         status: t.status,
         notiz: t.beschreibung || "",
         datum: t.datum,
+        created_by: t.created_by,
+        created_at: t.created_at,
+        updated_by: t.updated_by,
+        updated_at: t.updated_at,
       });
     });
 
@@ -461,6 +496,10 @@ function AppContent() {
         status: z.status,
         notiz: z.beschreibung || "",
         datum: z.startdatum || z.datum,
+        created_by: z.created_by,
+        created_at: z.created_at,
+        updated_by: z.updated_by,
+        updated_at: z.updated_at,
       });
     });
 
@@ -473,6 +512,10 @@ function AppContent() {
         rolle: i.funktion || i.nutzer?.rolle || "",
         telefon: "",
         email: "",
+        created_by: i.created_by,
+        created_at: i.created_at,
+        updated_by: i.updated_by,
+        updated_at: i.updated_at,
       });
     });
 
@@ -485,6 +528,10 @@ function AppContent() {
         rolle: e.funktion || "",
         telefon: e.telefon || "",
         email: e.email || "",
+        created_by: e.created_by,
+        created_at: e.created_at,
+        updated_by: e.updated_by,
+        updated_at: e.updated_at,
       });
     });
 
@@ -504,6 +551,7 @@ function AppContent() {
 
     setEintraege(groupedEntries);
     setFallakten(byClient);
+    await loadAuditLogs(ids);
   };
 
   const loadUsers = async () => {
@@ -616,6 +664,7 @@ function AppContent() {
     if (data) {
       const newE = { ...data, typ: data.typ === "Massnahme" ? "Maßnahme" : data.typ, sourceTable: "eintraege", bereich: "allgemein", kontaktart: data.typ };
       setEintraege(prev => ({ ...prev, [klientId]: [newE, ...(prev[klientId] || [])] }));
+      await loadAuditLogs(visibleClients.map(c => c.id));
       showToast("Eintrag gespeichert ✓");
     }
     if (error) showToast("Fehler beim Speichern", "#c0392b");
@@ -783,6 +832,7 @@ function AppContent() {
     }]).select().single();
     if (data) {
       setTermine(prev => [...prev, mapTermin(data)]);
+      await loadAuditLogs(visibleClients.map(c => c.id));
       showToast("Termin gespeichert ✓");
       return true;
     }
@@ -795,9 +845,10 @@ function AppContent() {
     const existing = termine.find(t => String(t.id) === String(id));
     if (!existing) return showToast("Termin wurde nicht gefunden.", "#c0392b");
     if (!canEditTermin(existing)) return deny("Du darfst diesen Termin nicht bearbeiten.");
-    const { data, error } = await supabase.from("termine").update({ status }).eq("id", id).select().single();
+    const { data, error } = await supabase.from("termine").update({ status, updated_by: session.user.id }).eq("id", id).select().single();
     if (error) return showToast(`Terminstatus konnte nicht gespeichert werden: ${error.message}`, "#c0392b");
     setTermine(prev => prev.map(t => String(t.id) === String(id) ? mapTermin(data) : t));
+    await loadAuditLogs(visibleClients.map(c => c.id));
     showToast("Terminstatus aktualisiert ✓");
   };
 
@@ -808,6 +859,7 @@ function AppContent() {
     const { error } = await supabase.from("termine").delete().eq("id", id);
     if (error) return showToast("Termin konnte nicht gelöscht werden.", "#c0392b");
     setTermine(prev => prev.filter(t => t.id !== id));
+    await loadAuditLogs(visibleClients.map(c => c.id));
     showToast("Termin gelöscht", "#64748b");
   };
 
@@ -827,6 +879,7 @@ function AppContent() {
     }]).select().single();
     if (data) {
       setNotizen(prev => [{ ...data, klientId: data.klient_id }, ...prev]);
+      await loadAuditLogs(visibleClients.map(c => c.id));
       showToast("Notiz gespeichert ✓");
     }
     if (error) showToast("Fehler beim Speichern", "#c0392b");
@@ -838,8 +891,17 @@ function AppContent() {
     const isOwner = existing.created_by === user?.id || existing.autor === user?.name;
     if (!isAdmin && !isOwner) return deny("Du darfst nur eigene Notizen bearbeiten.");
     if ((updates.klient_id || updates.klientId || existing.klientId) && !canEditClientContent(updates.klient_id || updates.klientId || existing.klientId)) return deny("Du darfst diese Notiz nicht dieser Fallakte zuordnen.");
-    const { error } = await supabase.from("notizen").update(updates).eq("id", id);
-    if (!error) setNotizen(prev => prev.map(n => n.id === id ? { ...n, ...updates } : n));
+    const dbUpdates = {
+      ...updates,
+      updated_by: session.user.id,
+      updated_at: new Date().toISOString(),
+    };
+    delete dbUpdates.klientId;
+    const { data, error } = await supabase.from("notizen").update(dbUpdates).eq("id", id).select().single();
+    if (!error && data) {
+      setNotizen(prev => prev.map(n => n.id === id ? { ...n, ...data, klientId: data.klient_id } : n));
+      await loadAuditLogs(visibleClients.map(c => c.id));
+    }
   };
 
   const deleteNotiz = async (id) => {
@@ -848,14 +910,15 @@ function AppContent() {
     if (!isAdmin && !isOwner) return deny("Du darfst nur eigene Notizen löschen.");
     await supabase.from("notizen").delete().eq("id", id);
     setNotizen(prev => prev.filter(n => n.id !== id));
+    await loadAuditLogs(visibleClients.map(c => c.id));
     showToast("Notiz gelöscht", "#64748b");
   };
 
   // ── Nutzer verwalten (Admin) ────────────────────────────────────
   const toggleNutzer = async (id, aktiv) => {
     if (!permissions.canManageUsers) return deny("Nur Admins dürfen Nutzer aktivieren oder deaktivieren.");
-    await supabase.from("nutzer").update({ aktiv }).eq("id", id);
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, aktiv } : u));
+    const { data } = await supabase.from("nutzer").update({ aktiv, updated_by: session.user.id }).eq("id", id).select().single();
+    setUsers(prev => prev.map(u => u.id === id ? { ...u, ...(data || { aktiv }) } : u));
     showToast(aktiv ? "Nutzer aktiviert ✓" : "Nutzer deaktiviert", aktiv ? "#16825a" : "#c0392b");
   };
 
@@ -890,6 +953,7 @@ function AppContent() {
         darf_ansehen: Boolean(g.darf_ansehen || g.darf_bearbeiten),
         darf_bearbeiten: Boolean(g.darf_bearbeiten),
         created_by: user?.id || null,
+        updated_by: user?.id || null,
         updated_at: new Date().toISOString(),
       }));
 
@@ -907,6 +971,7 @@ function AppContent() {
       }
     }
     await loadFreigaben();
+    await loadAuditLogs(visibleClients.map(c => c.id));
     showToast("Fallaktenrechte gespeichert ✓");
     return true;
   };
@@ -1019,6 +1084,8 @@ function AppContent() {
                 onKiBericht={() => setView("kibericht")}
                 notizen={visibleNotizen}
                 termine={visibleTermine}
+                auditLogs={auditLogs}
+                refreshAuditLogs={() => loadAuditLogs(visibleClients.map(c => c.id))}
                 deleteNotiz={deleteNotiz}
                 user={user}
                 users={users}
@@ -1530,7 +1597,7 @@ function statusTone(value, type) {
   return type === "status" ? "active" : "neutral";
 }
 
-function CompactRecord({ title, meta, text, onDelete, status, statusType, statusOptions = null, onStatusChange = null, statusDisabled = false }) {
+function CompactRecord({ title, meta, text, audit, onDelete, status, statusType, statusOptions = null, onStatusChange = null, statusDisabled = false }) {
   return (
     <div style={compactRecordStyle}>
       <div style={{ minWidth: 0 }}>
@@ -1546,13 +1613,64 @@ function CompactRecord({ title, meta, text, onDelete, status, statusType, status
         </div>
         {meta && <p style={recordMetaStyle}>{meta}</p>}
         {text && <p style={recordTextStyle}>{text}</p>}
+        {audit && <AuditMeta audit={audit} />}
       </div>
       {onDelete && <DeleteButton onClick={onDelete} />}
     </div>
   );
 }
 
-function ChronoRecord({ item, onEdit, onDelete, canEdit }) {
+function AuditMeta({ audit }) {
+  if (!audit?.createdAt && !audit?.updatedAt) return null;
+  const created = audit.createdAt
+    ? `Erstellt ${formatDateTime(audit.createdAt)}${audit.createdBy ? ` von ${audit.createdBy}` : ""}`
+    : "";
+  const updated = audit.updatedAt
+    ? `Zuletzt geändert ${formatDateTime(audit.updatedAt)}${audit.updatedBy ? ` von ${audit.updatedBy}` : ""}`
+    : "";
+  return (
+    <p style={{ ...recordMetaStyle, marginTop: 6 }}>
+      {[created, updated].filter(Boolean).join(" · ")}
+    </p>
+  );
+}
+
+const auditActionLabel = (action) => ({ create: "erstellt", update: "geändert", delete: "gelöscht" }[action] || action);
+const auditEntityLabel = (entity) => ({
+  dokumentationen: "Dokumentation",
+  eintraege: "Eintrag",
+  aufgaben: "Aufgabe",
+  ziele: "Ziel",
+  termine: "Termin",
+  notizen: "Notiz",
+  zustaendigkeit_intern: "Interne Zuständigkeit",
+  zustaendigkeit_extern: "Externe Zuständigkeit",
+  fallakten_freigaben: "Fallaktenfreigabe",
+  nutzer: "Benutzer",
+}[entity] || entity);
+
+function AuditLogList({ logs, users, user }) {
+  const visibleLogs = (logs || []).slice(0, 8);
+  if (!visibleLogs.length) return <EmptyState>Noch kein Änderungsverlauf für diese Fallakte vorhanden.</EmptyState>;
+  return (
+    <div style={{ marginTop: 14, borderTop: "1px solid #e2e8f0", paddingTop: 14 }}>
+      <p style={{ margin: "0 0 10px", color: "#334155", fontSize: 12, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px" }}>Änderungsverlauf</p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {visibleLogs.map(log => (
+          <div key={log.id} style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: 12, padding: "9px 0", borderTop: "1px solid #f1f5f9" }}>
+            <span style={{ ...recordMetaStyle, margin: 0 }}>{formatDateTime(log.changed_at)}</span>
+            <p style={{ margin: 0, color: "#475569", fontSize: 12, lineHeight: 1.5 }}>
+              <strong style={{ color: "#1f2937" }}>{auditEntityLabel(log.entity_type)}</strong> {auditActionLabel(log.action)}
+              {log.changed_by ? ` von ${resolveUserName(log.changed_by, users, user)}` : ""}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChronoRecord({ item, onEdit, onDelete, canEdit, audit }) {
   return (
     <div style={chronoRecordStyle}>
       <div className="chrono-grid" style={chronoHeaderGridStyle}>
@@ -1572,10 +1690,10 @@ function ChronoRecord({ item, onEdit, onDelete, canEdit }) {
           <span style={chronoLabelStyle}>Titel</span>
           <p style={recordTitleStyle}>{item.titel}</p>
           {item.autor && <p style={recordMetaStyle}>{item.autor}</p>}
-          {item.updated_at && <p style={recordMetaStyle}>Zuletzt geändert {formatDate(item.updated_at)}</p>}
         </div>
       </div>
       <p style={{ ...recordTextStyle, marginTop: 10 }}>{item.text}</p>
+      {audit && <AuditMeta audit={audit} />}
       {(item.nachgetragen || item.hashtags?.length > 0) && (
         <p style={{ ...recordMetaStyle, marginTop: 8 }}>
           {item.nachgetragen ? "Nachgetragen" : ""}
@@ -1593,7 +1711,7 @@ function ChronoRecord({ item, onEdit, onDelete, canEdit }) {
   );
 }
 
-function NoteRecord({ note }) {
+function NoteRecord({ note, users, user }) {
   const noteDate = note.datum || note.created_at;
   return (
     <div style={noteRecordStyle}>
@@ -1602,11 +1720,17 @@ function NoteRecord({ note }) {
         <span style={recordMetaStyle}>{note.autor}{noteDate ? ` · ${formatDate(noteDate)}` : ""}</span>
       </div>
       {note.text && <p style={{ ...recordTextStyle, marginTop: 8 }}>{note.text}</p>}
+      <AuditMeta audit={{
+        createdAt: note.created_at,
+        createdBy: note.created_by ? resolveUserName(note.created_by, users, user, note.autor || "Unbekannt") : note.autor,
+        updatedAt: note.updated_at,
+        updatedBy: note.updated_by ? resolveUserName(note.updated_by, users, user) : "",
+      }} />
     </div>
   );
 }
 
-function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canEdit, permissions, notizen, termine, user, users, showToast, fallakten, setFallakten, setEintraege }) {
+function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canEdit, permissions, notizen, termine, auditLogs, refreshAuditLogs, user, users, showToast, fallakten, setFallakten, setEintraege }) {
   const [openMap, setOpenMap] = useState({ klient: false, aufgaben: false, intern: false, extern: false, ziele: false, dateien: false, soziales: false, gesundheit: false, bildungBeruf: false, finanzen: false, behoerden: false, freizeit: false, dokumentation: false, notizen: false });
   const [newDocs, setNewDocs] = useState({ soziales: { titel: "", text: "", datum: ds(new Date()) }, gesundheit: { titel: "", text: "", datum: ds(new Date()) }, bildungBeruf: { titel: "", text: "", datum: ds(new Date()) }, finanzen: { titel: "", text: "", datum: ds(new Date()) }, behoerden: { titel: "", text: "", datum: ds(new Date()) }, freizeit: { titel: "", text: "", datum: ds(new Date()) } });
   const [quickFields, setQuickFields] = useState({ aufgabe: "", aufgabeDatum: ds(new Date()), externName: "", externStelle: "", externTelefon: "", externEmail: "", ziel: "", zielDatum: ds(new Date()), dateiKategorie: "Dokument", dateiDatum: ds(new Date()) });
@@ -1619,6 +1743,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
   const akte = fallakten?.[client.id] || createEmptyFallakte(client);
   const clientNotizen = (notizen || []).filter(n => n.klientId == client.id);
   const clientTermine = (termine || []).filter(t => String(t.klientId) === String(client.id));
+  const clientAuditLogs = (auditLogs || []).filter(log => String(log.klient_id) === String(client.id));
   const interneAuswahl = (users || []).filter(u => u.rolle === "Fachkraft" || u.rolle === "Leitung" || u.rolle === "Admin");
   const canDeleteRecords = permissions?.canDeleteRecords;
   const canDeleteFiles = permissions?.canDeleteFiles;
@@ -1630,6 +1755,13 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
     const matchesSearch = !taskQuery || (item.titel || "").toLowerCase().includes(taskQuery) || (item.notiz || "").toLowerCase().includes(taskQuery);
     return matchesStatus && matchesSearch;
   });
+  const auditMeta = (record, fallbackAuthor = "") => ({
+    createdAt: record?.created_at,
+    createdBy: record?.created_by ? resolveUserName(record.created_by, users, user, fallbackAuthor || "Unbekannt") : fallbackAuthor,
+    updatedAt: record?.updated_at,
+    updatedBy: record?.updated_by ? resolveUserName(record.updated_by, users, user, fallbackAuthor || "Unbekannt") : "",
+  });
+  const refreshClientAudit = () => refreshAuditLogs?.();
 
   const patchAkte = (updater) => {
     setFallakten(prev => {
@@ -1666,7 +1798,8 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
         created_by: user?.id || null,
       }]).select().single();
       if (error) return showToast("Aufgabe konnte nicht gespeichert werden.", "#c0392b");
-      patchAkte(cur => ({ ...cur, aufgaben: [{ id: data.id, titel: data.titel, status: data.status, notiz: data.beschreibung || "", datum: data.datum }, ...(cur.aufgaben || [])] }));
+      patchAkte(cur => ({ ...cur, aufgaben: [{ id: data.id, titel: data.titel, status: data.status, notiz: data.beschreibung || "", datum: data.datum, created_by: data.created_by, created_at: data.created_at, updated_by: data.updated_by, updated_at: data.updated_at }, ...(cur.aufgaben || [])] }));
+      refreshClientAudit();
       return;
     }
     if (section === "ziele") {
@@ -1680,7 +1813,8 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
         created_by: user?.id || null,
       }]).select().single();
       if (error) return showToast("Ziel konnte nicht gespeichert werden.", "#c0392b");
-      patchAkte(cur => ({ ...cur, ziele: [{ id: data.id, titel: data.titel, status: data.status, notiz: data.beschreibung || "", datum: data.startdatum || data.datum }, ...(cur.ziele || [])] }));
+      patchAkte(cur => ({ ...cur, ziele: [{ id: data.id, titel: data.titel, status: data.status, notiz: data.beschreibung || "", datum: data.startdatum || data.datum, created_by: data.created_by, created_at: data.created_at, updated_by: data.updated_by, updated_at: data.updated_at }, ...(cur.ziele || [])] }));
+      refreshClientAudit();
       return;
     }
     if (section === "extern") {
@@ -1694,7 +1828,8 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
         created_by: user?.id || null,
       }]).select().single();
       if (error) return showToast("Externe Zuständigkeit konnte nicht gespeichert werden.", "#c0392b");
-      patchAkte(cur => ({ ...cur, extern: [{ id: data.id, name: data.ansprechperson || data.institution, stelle: data.institution, rolle: data.funktion || "", telefon: data.telefon || "", email: data.email || "" }, ...(cur.extern || [])] }));
+      patchAkte(cur => ({ ...cur, extern: [{ id: data.id, name: data.ansprechperson || data.institution, stelle: data.institution, rolle: data.funktion || "", telefon: data.telefon || "", email: data.email || "", created_by: data.created_by, created_at: data.created_at, updated_by: data.updated_by, updated_at: data.updated_at }, ...(cur.extern || [])] }));
+      refreshClientAudit();
       return;
     }
     if (section === "intern") {
@@ -1707,19 +1842,21 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
         created_by: user?.id || null,
       }]).select().single();
       if (error) return showToast("Interne Zuständigkeit konnte nicht gespeichert werden.", "#c0392b");
-      patchAkte(cur => ({ ...cur, intern: [{ id: data.id, userId: nutzerId, name: payload.name || picked?.name || "", rolle: data.funktion || picked?.rolle || "", telefon: "", email: picked?.email || "" }, ...(cur.intern || [])] }));
+      patchAkte(cur => ({ ...cur, intern: [{ id: data.id, userId: nutzerId, name: payload.name || picked?.name || "", rolle: data.funktion || picked?.rolle || "", telefon: "", email: picked?.email || "", created_by: data.created_by, created_at: data.created_at, updated_by: data.updated_by, updated_at: data.updated_at }, ...(cur.intern || [])] }));
+      refreshClientAudit();
     }
   };
 
   const updateAufgabeStatus = async (id, status) => {
     if (!canEdit) return blockEdit();
     if (!AUFGABEN_STATUS.includes(status)) return showToast("Ungültiger Aufgabenstatus.", "#c0392b");
-    const { data, error } = await supabase.from("aufgaben").update({ status }).eq("id", id).select().single();
+    const { data, error } = await supabase.from("aufgaben").update({ status, updated_by: user?.id || null }).eq("id", id).select().single();
     if (error) return showToast(`Aufgabenstatus konnte nicht gespeichert werden: ${error.message}`, "#c0392b");
     patchAkte(cur => ({
       ...cur,
-      aufgaben: (cur.aufgaben || []).map(item => String(item.id) === String(id) ? { ...item, status: data?.status || status } : item),
+      aufgaben: (cur.aufgaben || []).map(item => String(item.id) === String(id) ? { ...item, status: data?.status || status, updated_by: data?.updated_by, updated_at: data?.updated_at } : item),
     }));
+    refreshClientAudit();
     showToast("Aufgabenstatus aktualisiert ✓");
   };
 
@@ -1742,10 +1879,11 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
       ...cur,
       fachbereiche: {
         ...cur.fachbereiche,
-        [bereich]: [{ id: data.id, titel: data.titel, text: data.inhalt, datum: data.datum, autor: data.erstellt_von_name || user?.name || "" }, ...(cur.fachbereiche?.[bereich] || [])],
+        [bereich]: [{ id: data.id, titel: data.titel, text: data.inhalt, datum: data.datum, autor: data.erstellt_von_name || user?.name || "", created_by: data.created_by, created_at: data.created_at, updated_by: data.updated_by, updated_at: data.updated_at }, ...(cur.fachbereiche?.[bereich] || [])],
       },
     }));
     setNewDocs(prev => ({ ...prev, [bereich]: { titel: "", text: "", datum: ds(new Date()) } }));
+    refreshClientAudit();
     showToast(`${fachbereichLabel(dbBereich)} ergänzt ✓`);
   };
 
@@ -1837,6 +1975,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
     const { error } = await supabase.from(table).delete().eq("id", id);
     if (error) return showToast("Eintrag konnte nicht gelöscht werden.", "#c0392b");
     patchAkte(cur => ({ ...cur, [section]: (cur[section] || []).filter(x => x.id !== id) }));
+    refreshClientAudit();
   };
 
   const removeDoc = async (bereich, id) => {
@@ -1844,6 +1983,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
     const { error } = await supabase.from("dokumentationen").delete().eq("id", id);
     if (error) return showToast("Dokumentation konnte nicht gelöscht werden.", "#c0392b");
     patchAkte(cur => ({ ...cur, fachbereiche: { ...cur.fachbereiche, [bereich]: (cur.fachbereiche?.[bereich] || []).filter(x => x.id !== id) } }));
+    refreshClientAudit();
   };
 
   const docFormFromItem = (item) => ({
@@ -1874,7 +2014,9 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
       kontaktart: data.kontaktart || "",
       hashtags: data.hashtags || [],
       nachgetragen: Boolean(data.nachgetragen),
+      created_by: data.created_by,
       created_at: data.created_at,
+      updated_by: data.updated_by,
       updated_at: data.updated_at,
     };
     setEintraege(prev => ({
@@ -1897,7 +2039,9 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
           kontaktart: data.kontaktart || "",
           hashtags: data.hashtags || [],
           nachgetragen: Boolean(data.nachgetragen),
+          created_by: data.created_by,
           created_at: data.created_at,
+          updated_by: data.updated_by,
           updated_at: data.updated_at,
         }, ...(fachbereiche[fachKey] || [])];
       }
@@ -1914,6 +2058,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
         typ: editingDoc.kontaktart === "Maßnahme" ? "Massnahme" : (editingDoc.kontaktart || "Fallverlauf"),
         titel: editingDoc.titel,
         text: editingDoc.text,
+        updated_by: user?.id || null,
       }).eq("id", editingDoc.id).select().single();
       if (error) return showToast(`Eintrag konnte nicht aktualisiert werden: ${error.message}`, "#c0392b");
       const mapped = { ...data, typ: data.typ === "Massnahme" ? "Maßnahme" : data.typ, sourceTable: "eintraege", bereich: "allgemein", kontaktart: data.typ };
@@ -1922,6 +2067,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
         [client.id]: (prev[client.id] || []).map(e => String(e.id) === String(data.id) ? mapped : e),
       }));
       setEditingDoc(null);
+      refreshClientAudit();
       showToast("Dokumentation aktualisiert ✓");
       return;
     }
@@ -1934,12 +2080,14 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
       inhalt: editingDoc.text,
       hashtags: tags,
       nachgetragen: editingDoc.nachgetragen,
+      updated_by: user?.id || null,
       updated_at: new Date().toISOString(),
     };
     const { data, error } = await supabase.from("dokumentationen").update(payload).eq("id", editingDoc.id).select().single();
     if (error) return showToast(`Dokumentation konnte nicht aktualisiert werden: ${error.message}`, "#c0392b");
     applyDocumentationUpdate(data);
     setEditingDoc(null);
+    refreshClientAudit();
     showToast("Dokumentation aktualisiert ✓");
   };
 
@@ -1957,6 +2105,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
         (items || []).filter(doc => String(doc.id) !== String(docId)),
       ])),
     }));
+    refreshClientAudit();
     showToast("Dokumentation gelöscht", "#64748b");
   };
 
@@ -1976,7 +2125,9 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
       kontaktart: item.kontaktart || "Fachbereich",
       hashtags: item.hashtags || [],
       nachgetragen: Boolean(item.nachgetragen),
+      created_by: item.created_by,
       created_at: item.created_at,
+      updated_by: item.updated_by,
       updated_at: item.updated_at,
       farbe: fachbereichFarbe(bereich),
     }))),
@@ -1993,7 +2144,9 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
       kontaktart: e.kontaktart || e.typ,
       hashtags: e.hashtags || [],
       nachgetragen: Boolean(e.nachgetragen),
+      created_by: e.created_by,
       created_at: e.created_at,
+      updated_by: e.updated_by,
       updated_at: e.updated_at,
       farbe: typeColor(e.typ),
     })),
@@ -2058,7 +2211,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
           </div>
           {(akte.aufgaben || []).length === 0 && <EmptyState>Noch keine Aufgaben erfasst.</EmptyState>}
           {(akte.aufgaben || []).length > 0 && filteredAufgaben.length === 0 && <EmptyState>Keine passenden Aufgaben gefunden.</EmptyState>}
-          {filteredAufgaben.map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" statusOptions={AUFGABEN_STATUS} statusDisabled={!canEdit} onStatusChange={(status) => updateAufgabeStatus(item.id, status)} meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={canDeleteRecords ? () => removeItem("aufgaben", item.id) : null} />)}
+          {filteredAufgaben.map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" statusOptions={AUFGABEN_STATUS} statusDisabled={!canEdit} onStatusChange={(status) => updateAufgabeStatus(item.id, status)} meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} audit={auditMeta(item)} onDelete={canDeleteRecords ? () => removeItem("aufgaben", item.id) : null} />)}
         </AkteSection>
 
         <AkteSection sectionKey="extern" title="Zuständigkeit extern" open={openMap["extern"]} onToggle={toggleSection}>
@@ -2071,7 +2224,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
           {canEdit && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
             <button onClick={() => { if (!quickFields.externName.trim()) return; addSimpleItem("extern", { name: quickFields.externName, stelle: quickFields.externStelle, telefon: quickFields.externTelefon, email: quickFields.externEmail }); setQuickFields(p => ({ ...p, externName: "", externStelle: "", externTelefon: "", externEmail: "" })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Kontakt</button>
           </div>}
-          {(akte.extern || []).map(item => <CompactRecord key={item.id} title={item.name} status={item.status || "aktiv"} statusType="status" meta={`${item.stelle || "Externe Stelle"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} onDelete={canDeleteRecords ? () => removeItem("extern", item.id) : null} />)}
+          {(akte.extern || []).map(item => <CompactRecord key={item.id} title={item.name} status={item.status || "aktiv"} statusType="status" meta={`${item.stelle || "Externe Stelle"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} audit={auditMeta(item)} onDelete={canDeleteRecords ? () => removeItem("extern", item.id) : null} />)}
           {(akte.extern || []).length === 0 && <EmptyState>Keine externen Zuständigkeiten hinterlegt.</EmptyState>}
         </AkteSection>
 
@@ -2083,7 +2236,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
             </select>
             <button onClick={() => { const picked = interneAuswahl.find(u => String(u.id) === String(selectedInternUserId)); if (!picked) return showToast("Bitte eine Fachkraft auswählen.", "#c0392b"); addSimpleItem("intern", { userId: picked.id, name: picked.name, rolle: picked.rolle, telefon: "", email: picked.email }); setSelectedInternUserId(""); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Fachkraft</button>
           </div>}
-          {(akte.intern || []).map(item => <CompactRecord key={item.id} title={item.name} status={item.status || "aktiv"} statusType="status" meta={`${item.rolle || "Fachkraft"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} onDelete={canDeleteRecords ? () => removeItem("intern", item.id) : null} />)}
+          {(akte.intern || []).map(item => <CompactRecord key={item.id} title={item.name} status={item.status || "aktiv"} statusType="status" meta={`${item.rolle || "Fachkraft"}${item.telefon ? ` · ${item.telefon}` : ""}${item.email ? ` · ${item.email}` : ""}`} audit={auditMeta(item)} onDelete={canDeleteRecords ? () => removeItem("intern", item.id) : null} />)}
           {(akte.intern || []).length === 0 && <EmptyState>Keine internen Zuständigkeiten hinterlegt.</EmptyState>}
         </AkteSection>
 
@@ -2093,7 +2246,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
             <input type="date" value={quickFields.zielDatum} onChange={e => setQuickFields(p => ({ ...p, zielDatum: e.target.value }))} style={inputStyle} />
             <button onClick={() => { if (!quickFields.ziel.trim()) return; addSimpleItem("ziele", { titel: quickFields.ziel, status: "laufend", notiz: "", datum: quickFields.zielDatum || ds(new Date()) }); setQuickFields(p => ({ ...p, ziel: "", zielDatum: ds(new Date()) })); }} style={{ ...btnPrimary, whiteSpace: "nowrap" }}>+ Ziel</button>
           </div>}
-          {(akte.ziele || []).map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} onDelete={canDeleteRecords ? () => removeItem("ziele", item.id) : null} />)}
+          {(akte.ziele || []).map(item => <CompactRecord key={item.id} title={item.titel} status={item.status} statusType="status" meta={item.datum ? formatDate(item.datum) : ""} text={item.notiz} audit={auditMeta(item)} onDelete={canDeleteRecords ? () => removeItem("ziele", item.id) : null} />)}
           {(akte.ziele || []).length === 0 && <EmptyState>Noch keine Ziele erfasst.</EmptyState>}
         </AkteSection>
 
@@ -2123,7 +2276,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
               </div>
             </div>}
             {(akte.fachbereiche?.[key] || []).length === 0 && <EmptyState>Noch keine Einträge in diesem Bereich.</EmptyState>}
-            {(akte.fachbereiche?.[key] || []).map(item => <CompactRecord key={item.id} title={item.titel} meta={`${formatDate(item.datum)}${item.autor ? ` · ${item.autor}` : ""}`} text={item.text} onDelete={canDeleteRecords ? () => removeDoc(key, item.id) : null} />)}
+            {(akte.fachbereiche?.[key] || []).map(item => <CompactRecord key={item.id} title={item.titel} meta={`${formatDate(item.datum)}${item.autor ? ` · ${item.autor}` : ""}`} text={item.text} audit={auditMeta(item, item.autor)} onDelete={canDeleteRecords ? () => removeDoc(key, item.id) : null} />)}
           </AkteSection>
         ))}
 
@@ -2136,17 +2289,19 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
                   key={item.id}
                   item={item}
                   canEdit={canEdit}
+                  audit={auditMeta(item, item.autor || item.fachkraft)}
                   onEdit={() => setEditingDoc(docFormFromItem(item))}
                   onDelete={canDeleteRecords ? () => deleteDocumentation(item) : null}
                 />
               ))}
             </div>
+            <AuditLogList logs={clientAuditLogs} users={users} user={user} />
           </AkteSection>
         </div>
 
         <div style={{ gridColumn: "1 / -1" }}>
           <AkteSection sectionKey="notizen" title="Notizen zum Klienten" color="#475569" rightContent={<CountBadge>{clientNotizen.length}</CountBadge>} open={openMap["notizen"]} onToggle={toggleSection}>
-            {clientNotizen.length === 0 ? <EmptyState>Keine verknüpften Notizen vorhanden.</EmptyState> : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{clientNotizen.map(n => <NoteRecord key={n.id} note={n} />)}</div>}
+            {clientNotizen.length === 0 ? <EmptyState>Keine verknüpften Notizen vorhanden.</EmptyState> : <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>{clientNotizen.map(n => <NoteRecord key={n.id} note={n} users={users} user={user} />)}</div>}
           </AkteSection>
         </div>
       </div>
@@ -2212,6 +2367,14 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
       {TERMIN_STATUS.map(status => <option key={status} value={status}>{status}</option>)}
     </select>
   );
+  const TerminAuditLine = ({ termin }) => {
+    if (!termin.created_at && !termin.updated_at) return null;
+    return (
+      <p style={{ margin: "4px 0 0", fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
+        {`${termin.created_at ? `Erstellt ${formatDateTime(termin.created_at)}` : ""}${termin.updated_at ? ` · Geändert ${formatDateTime(termin.updated_at)}` : ""}`}
+      </p>
+    );
+  };
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
@@ -2245,6 +2408,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
                     <p style={{ margin: "3px 0", fontSize: 12, color: "#64748b" }}>🕐 {t.uhrzeit} · 📍 {t.ort}</p>
                     {k && <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}>👤 {k.name}</p>}
                     {t.erinnerung && <span style={{ fontSize: 11, color: "#f59e0b" }}>🔔 Erinnerung aktiv</span>}
+                    <TerminAuditLine termin={t} />
                   </div>
                   <button onClick={() => onDeleteTermin(t.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "#94a3b8", fontSize: 18, padding: 4 }}>✕</button>
                 </div>
@@ -2263,6 +2427,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
                 <StatusControl termin={t} />
               </div>
               <p style={{ margin: "2px 0", fontSize: 11, color: "#94a3b8" }}>{formatDate(t.datum)} {t.uhrzeit} {k ? `· ${k.name}` : ""}</p>
+              <TerminAuditLine termin={t} />
             </div>;
           })}
         </div>
@@ -2278,6 +2443,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, onUpdateTerminStat
                 <div style={{ minWidth: 0 }}>
                   <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#1e293b" }}>{t.titel}</p>
                   <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{formatDate(t.datum)} {t.uhrzeit}{k ? ` · ${k.name}` : ""}{t.ort ? ` · ${t.ort}` : ""}</p>
+                  <TerminAuditLine termin={t} />
                 </div>
                 <StatusControl termin={t} />
               </div>
@@ -2961,6 +3127,9 @@ function NotizenView({ notizen, onAdd, onUpdate, onDelete, user, clients, showTo
                     </div>
                   )}
                   {klient && <div style={{ background: "rgba(255,255,255,.6)", borderRadius: 8, padding: "3px 10px", marginBottom: 8, fontSize: 12, color: "#1a4480", display: "inline-block", fontWeight: 600 }}>👤 {klient.name}</div>}
+                  <p style={{ margin: "0 0 8px", fontSize: 11, color: "#64748b", lineHeight: 1.5 }}>
+                    {`Erstellt ${formatDateTime(n.created_at || n.datum)}${n.updated_at ? ` · Geändert ${formatDateTime(n.updated_at)}` : ""}`}
+                  </p>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 8, borderTop: "1px solid rgba(0,0,0,.08)" }}>
                     <span style={{ fontSize: 11, color: "#64748b" }}>{n.typ === "team" ? "👥" : "👤"} {n.autor} · {formatDate(n.datum)}</span>
                     <div style={{ display: "flex", gap: 3 }}>
