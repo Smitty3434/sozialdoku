@@ -48,12 +48,19 @@ const FACHBEREICH_LABELS = {
 const SECTION_ICONS = {
   klient: "user",
   aufgaben: "check",
+  intern: "userCheck",
+  extern: "network",
   ziele: "target",
   dateien: "file",
   dokumentation: "doc",
-  gesundheit: "plus",
+  soziales: "users",
+  gesundheit: "medical",
+  bildungBeruf: "briefcase",
+  finanzen: "wallet",
   behoerden: "building",
   freizeit: "spark",
+  notizen: "note",
+  termine: "calendar",
 };
 const FACHBEREICH_FARBEN = {
   soziales: "#0f766e",
@@ -682,7 +689,7 @@ export default function App() {
       {/* Neuer Eintrag Modal */}
       {newEintrag && selectedClient && (
         <Modal onClose={closeNewEintrag}>
-          <h2 style={{ fontFamily: "'DM Serif Display',serif", fontSize: 22, marginBottom: 4 }}>Neuer Eintrag</h2>
+          <h2 style={modalTitleStyle}><SectionIcon name={SECTION_ICONS.dokumentation} />Neuer Eintrag</h2>
           <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>{selectedClient.name}</p>
           <div style={{ marginBottom: 16 }}>
             <p style={{ fontSize: 11, fontWeight: 700, color: "#475569", textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 8 }}>📋 Vorlage verwenden</p>
@@ -975,6 +982,16 @@ function HeaderButton({ children, onClick, primary = false }) {
   return <button onClick={onClick} style={primary ? { ...btnPrimary, fontSize: 12 } : { ...btnSecondary, fontSize: 12 }}>{children}</button>;
 }
 
+function IconHeading({ icon, children, level = "h2", style = cardTitle }) {
+  const Tag = level;
+  return (
+    <Tag style={{ ...style, display: "flex", alignItems: "center", gap: 10 }}>
+      <SectionIcon name={SECTION_ICONS[icon] || icon} />
+      <span>{children}</span>
+    </Tag>
+  );
+}
+
 function AkteSection({ sectionKey, title, color = "#0f2647", children, rightContent = null, open, onToggle }) {
   return (
     <div style={{ background: "#ffffff", borderRadius: 8, boxShadow: open ? "0 10px 26px rgba(15,23,42,.06)" : "none", overflow: "hidden", border: open ? "1px solid #94a3b8" : "1px solid #dbe3ea" }}>
@@ -1000,12 +1017,19 @@ function SectionIcon({ name, active }) {
   const paths = {
     user: <><circle cx="12" cy="8" r="3" {...common} /><path d="M5 19c1.4-3.2 3.7-4.8 7-4.8s5.6 1.6 7 4.8" {...common} /></>,
     check: <><path d="M4 7h10" {...common} /><path d="M4 12h8" {...common} /><path d="m15 14 2 2 4-5" {...common} /></>,
+    userCheck: <><circle cx="9" cy="8" r="3" {...common} /><path d="M3.5 19c1.1-3.1 2.9-4.6 5.5-4.6" {...common} /><path d="m14 13 2 2 4-5" {...common} /></>,
+    network: <><circle cx="7" cy="8" r="2.5" {...common} /><circle cx="17" cy="8" r="2.5" {...common} /><circle cx="12" cy="17" r="2.5" {...common} /><path d="m9 10 2 5M15 10l-2 5" {...common} /></>,
+    users: <><circle cx="9" cy="8" r="3" {...common} /><path d="M3.5 19c1.1-3.1 2.9-4.6 5.5-4.6s4.4 1.5 5.5 4.6" {...common} /><path d="M16 6.5a2.5 2.5 0 0 1 0 5M17.5 14.5c1.4.7 2.4 2.2 3 4.5" {...common} /></>,
     target: <><circle cx="12" cy="12" r="7" {...common} /><circle cx="12" cy="12" r="3" {...common} /></>,
     file: <><path d="M7 3h7l4 4v14H7z" {...common} /><path d="M14 3v5h5" {...common} /></>,
     doc: <><path d="M6 5h12v14H6z" {...common} /><path d="M9 9h6M9 13h6M9 17h4" {...common} /></>,
-    plus: <><path d="M12 5v14M5 12h14" {...common} /></>,
+    medical: <><path d="M9 4h6v5h5v6h-5v5H9v-5H4V9h5z" {...common} /></>,
+    briefcase: <><path d="M4 8h16v11H4z" {...common} /><path d="M9 8V5h6v3M4 12h16" {...common} /></>,
+    wallet: <><path d="M5 7h14v11H5z" {...common} /><path d="M16 11h4v4h-4zM7 7V5h10" {...common} /></>,
     building: <><path d="M5 20V6l7-3 7 3v14" {...common} /><path d="M9 9h.01M12 9h.01M15 9h.01M9 13h.01M12 13h.01M15 13h.01" {...common} /></>,
     spark: <><path d="M12 4v5M12 15v5M4 12h5M15 12h5" {...common} /><path d="m8 8 8 8M16 8l-8 8" {...common} /></>,
+    note: <><path d="M6 4h12v16H6z" {...common} /><path d="M9 8h6M9 12h6M9 16h3" {...common} /></>,
+    calendar: <><path d="M5 5h14v15H5zM8 3v4M16 3v4M5 10h14" {...common} /></>,
   };
   return (
     <span style={sectionIconWrapStyle}>
@@ -1610,7 +1634,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onExport, onKiBer
       </div>
       {editingDoc && (
         <Modal onClose={() => setEditingDoc(null)} maxWidth={720}>
-          <h2 style={{ fontFamily: "'DM Serif Display',serif", fontSize: 22, marginBottom: 4 }}>Dokumentation bearbeiten</h2>
+          <h2 style={modalTitleStyle}><SectionIcon name={SECTION_ICONS.dokumentation} />Dokumentation bearbeiten</h2>
           <p style={{ color: "#64748b", fontSize: 13, marginBottom: 16 }}>{client.name}</p>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 12 }}>
             <FormField label="Bereich">
@@ -1665,12 +1689,12 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, sho
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-        <div><h1 style={pageTitle}>Kalender & Termine</h1><p style={pageSubtitle}>{future.length} anstehende Termine</p></div>
+        <div><IconHeading icon="termine" level="h1" style={pageTitle}>Kalender & Termine</IconHeading><p style={pageSubtitle}>{future.length} anstehende Termine</p></div>
         <button onClick={() => setShowNew(true)} style={btnPrimary}>+ Neuer Termin</button>
       </div>
       <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         <div style={card}>
-          <h2 style={cardTitle}>📅 Anstehende Termine</h2>
+          <IconHeading icon="termine">Anstehende Termine</IconHeading>
           {future.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine Termine geplant.</p>}
           {future.map(t => {
             const k = getKlient(t.klientId); const isToday = t.datum === today;
@@ -1697,7 +1721,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, sho
           })}
         </div>
         <div style={card}>
-          <h2 style={cardTitle}>✅ Vergangene Termine</h2>
+          <IconHeading icon="termine">Vergangene Termine</IconHeading>
           {past.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine vergangenen Termine.</p>}
           {[...past].reverse().slice(0, 6).map(t => {
             const k = getKlient(t.klientId);
@@ -1710,7 +1734,7 @@ function KalenderView({ termine, onAddTermin, onDeleteTermin, clients, user, sho
       </div>
       {showNew && (
         <Modal onClose={() => setShowNew(false)}>
-          <h2 style={{ fontFamily: "'DM Serif Display',serif", fontSize: 22, marginBottom: 20 }}>Neuen Termin anlegen</h2>
+          <h2 style={modalTitleStyle}><SectionIcon name={SECTION_ICONS.termine} />Neuen Termin anlegen</h2>
           <FormField label="Titel"><input value={form.titel} onChange={e => set("titel", e.target.value)} style={inputStyle} placeholder="z.B. Hilfeplan-Gespräch" /></FormField>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <FormField label="Datum"><input type="date" value={form.datum} onChange={e => set("datum", e.target.value)} style={inputStyle} /></FormField>
@@ -2654,6 +2678,7 @@ const card = { background: "#fff", borderRadius: 12, padding: "24px 28px", boxSh
 const cardTitle = { fontFamily: "'DM Sans',sans-serif", fontSize: 17, fontWeight: 700, margin: "0 0 16px", color: "#1f2937" };
 const pageTitle = { fontFamily: "'DM Sans',sans-serif", fontSize: 32, fontWeight: 700, color: "#1f2937", margin: "0 0 6px" };
 const pageSubtitle = { color: "#64748b", fontSize: 15, margin: "0 0 28px" };
+const modalTitleStyle = { fontFamily: "'DM Serif Display',serif", fontSize: 22, margin: "0 0 4px", color: "#111827", display: "flex", alignItems: "center", gap: 10 };
 const sectionIconWrapStyle = { width: 28, height: 28, borderRadius: 8, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "#f8fafc", border: "1px solid #e2e8f0", flexShrink: 0 };
 const compactRecordStyle = { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 14, border: "1px solid #e5e7eb", borderRadius: 8, padding: "14px 15px", background: "#fff", marginTop: 10 };
 const chronoRecordStyle = { border: "1px solid #e2e8f0", borderLeft: "3px solid #475569", borderRadius: 8, padding: "15px 16px", background: "#fff", boxShadow: "0 1px 2px rgba(15,23,42,.04)" };
