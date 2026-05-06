@@ -1,5 +1,29 @@
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { differenceInCalendarDays, format, isValid, parseISO, startOfDay } from "date-fns";
+import { de } from "date-fns/locale";
+import { ErrorBoundary } from "react-error-boundary";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import {
+  AlertTriangle,
+  CalendarDays,
+  CheckSquare,
+  ClipboardList,
+  Compass,
+  FolderOpen,
+  GraduationCap,
+  HeartPulse,
+  Landmark,
+  Network,
+  RotateCcw,
+  StickyNote,
+  Target,
+  User,
+  UserCheck,
+  Users,
+  WalletCards,
+} from "lucide-react";
 
 // ── Supabase ──────────────────────────────────────────────────────
 const SUPABASE_URL = "https://bketznljcsrhufcvszsj.supabase.co";
@@ -46,21 +70,21 @@ const FACHBEREICH_LABELS = {
   freizeit: "Freizeit",
 };
 const SECTION_ICONS = {
-  klient: "user",
-  aufgaben: "check",
-  intern: "userCheck",
-  extern: "network",
-  ziele: "target",
-  dateien: "file",
-  dokumentation: "doc",
-  soziales: "users",
-  gesundheit: "medical",
-  bildungBeruf: "graduation",
-  finanzen: "wallet",
-  behoerden: "building",
-  freizeit: "compass",
-  notizen: "note",
-  termine: "calendar",
+  klient: User,
+  aufgaben: CheckSquare,
+  intern: UserCheck,
+  extern: Network,
+  ziele: Target,
+  dateien: FolderOpen,
+  dokumentation: ClipboardList,
+  soziales: Users,
+  gesundheit: HeartPulse,
+  bildungBeruf: GraduationCap,
+  finanzen: WalletCards,
+  behoerden: Landmark,
+  freizeit: Compass,
+  notizen: StickyNote,
+  termine: CalendarDays,
 };
 const FACHBEREICH_FARBEN = {
   soziales: "#0f766e",
@@ -100,19 +124,24 @@ const createEmptyFallakte = (client = {}) => ({
 });
 
 // ── Helpers ───────────────────────────────────────────────────────
-const ds = (d) => d.toISOString().split("T")[0];
-const formatDate = (d) => d ? new Date(d).toLocaleDateString("de-DE") : "–";
+const parseAppDate = (date) => {
+  if (!date) return null;
+  const parsed = typeof date === "string" ? parseISO(date) : new Date(date);
+  return isValid(parsed) ? parsed : null;
+};
+const ds = (d) => format(d, "yyyy-MM-dd");
+const formatDate = (d) => {
+  const parsed = parseAppDate(d);
+  return parsed ? format(parsed, "dd.MM.yyyy", { locale: de }) : "–";
+};
 const typeColor = () => "#475569";
 const typBg = () => "#f1f5f9";
 const rolleStyle = (r) => ROLLEN_FARBEN[r] || { bg: "#f1f5f9", color: "#475569" };
 const mapTermin = (t) => ({ ...t, klientId: t.klient_id, erinnerung: Boolean(t.erinnerung) });
-const localDate = (date) => {
-  const [year, month, day] = String(date || "").split("-").map(Number);
-  return new Date(year || 1970, (month || 1) - 1, day || 1);
-};
 const dayDiff = (date, from = new Date()) => {
-  const start = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-  return Math.ceil((localDate(date) - start) / 86400000);
+  const parsed = parseAppDate(date);
+  if (!parsed) return Number.POSITIVE_INFINITY;
+  return differenceInCalendarDays(startOfDay(parsed), startOfDay(from));
 };
 
 // ── PDF Export ─────────────────────────────────────────────────────
@@ -126,6 +155,32 @@ const exportPDF = (client, eintraege) => {
 // MAIN APP — mit Supabase
 // ══════════════════════════════════════════════════════════════════
 export default function App() {
+  return (
+    <ErrorBoundary FallbackComponent={AppErrorFallback}>
+      <AppContent />
+    </ErrorBoundary>
+  );
+}
+
+function AppErrorFallback({ error, resetErrorBoundary }) {
+  return (
+    <><FontLoader /><style>{globalStyles}</style>
+      <div style={{ minHeight: "100vh", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "'DM Sans',sans-serif" }}>
+        <div style={{ ...card, maxWidth: 520, margin: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+            <SectionIcon name={AlertTriangle} active />
+            <h1 style={{ ...cardTitle, margin: 0 }}>Die App konnte nicht vollständig geladen werden</h1>
+          </div>
+          <p style={{ margin: "0 0 16px", color: "#64748b", fontSize: 14, lineHeight: 1.6 }}>Bitte lade die Ansicht neu. Falls der Fehler erneut auftritt, kann die Meldung für die technische Prüfung genutzt werden.</p>
+          <pre style={{ maxHeight: 140, overflow: "auto", background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 8, padding: 12, color: "#334155", fontSize: 12 }}>{error?.message || "Unbekannter Fehler"}</pre>
+          <button onClick={resetErrorBoundary} style={{ ...btnPrimary, marginTop: 16 }}><RotateCcw size={16} />Erneut versuchen</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function AppContent() {
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -753,20 +808,34 @@ export default function App() {
 
 // ── Login Screen (Supabase Auth) ───────────────────────────────────
 const DEMO_LOGIN = { email: "test@deinprojekt.de", password: "passwort" };
+const loginSchema = z.object({
+  email: z.string().email("Bitte eine gültige E-Mail-Adresse eingeben."),
+  password: z.string().min(1, "Bitte Passwort eingeben."),
+});
 
 function LoginScreen({ onLogin }) {
   const [email, setEmail] = useState(DEMO_LOGIN.email);
   const [pass, setPass] = useState(DEMO_LOGIN.password);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const { register, handleSubmit } = useForm({ defaultValues: DEMO_LOGIN });
 
-  const handle = async () => {
+  const emailField = register("email");
+  const passwordField = register("password");
+
+  const submitLogin = async (values) => {
+    const parsed = loginSchema.safeParse(values);
+    if (!parsed.success) {
+      setErr(parsed.error.issues[0]?.message || "Bitte Zugangsdaten prüfen.");
+      return;
+    }
     setLoading(true);
     setErr("");
-    const error = await onLogin(email, pass);
+    const error = await onLogin(parsed.data.email, parsed.data.password);
     if (error) setErr(error);
     setLoading(false);
   };
+  const handle = handleSubmit(submitLogin);
 
   return (
     <><FontLoader /><style>{globalStyles}</style>
@@ -777,8 +846,8 @@ function LoginScreen({ onLogin }) {
             <h1 style={{ fontFamily: "'DM Serif Display',serif", fontSize: 30, color: "#0f2647", margin: 0 }}>SozialDoku</h1>
             <p style={{ color: "#64748b", fontSize: 14, marginTop: 6 }}>Dokumentationssoftware für soziale Einrichtungen</p>
           </div>
-          <FormField label="E-Mail"><input value={email} onChange={e => setEmail(e.target.value)} style={inputStyle} placeholder="name@einrichtung.de" type="email" /></FormField>
-          <FormField label="Passwort"><input value={pass} onChange={e => setPass(e.target.value)} onKeyDown={e => e.key === "Enter" && handle()} style={inputStyle} placeholder="••••••••" type="password" /></FormField>
+          <FormField label="E-Mail"><input {...emailField} defaultValue={email} onChange={e => { setEmail(e.target.value); emailField.onChange(e); }} style={inputStyle} placeholder="name@einrichtung.de" type="email" /></FormField>
+          <FormField label="Passwort"><input {...passwordField} defaultValue={pass} onChange={e => { setPass(e.target.value); passwordField.onChange(e); }} onKeyDown={e => e.key === "Enter" && handle()} style={inputStyle} placeholder="••••••••" type="password" /></FormField>
           {err && <p style={{ color: "#c0392b", fontSize: 13, marginBottom: 12 }}>{err}</p>}
           <button onClick={handle} disabled={loading} style={{ ...btnPrimary, width: "100%", justifyContent: "center", fontSize: 16, padding: "13px 0", opacity: loading ? .7 : 1 }}>
             {loading ? "⏳ Anmelden…" : "Anmelden"}
@@ -1012,28 +1081,10 @@ function AkteSection({ sectionKey, title, color = "#0f2647", children, rightCont
 
 function SectionIcon({ name, active }) {
   if (!name) return null;
-  const stroke = active ? "#1e3a5f" : "#475569";
-  const common = { fill: "none", stroke, strokeWidth: 1.9, strokeLinecap: "round", strokeLinejoin: "round" };
-  const paths = {
-    user: <><circle cx="12" cy="8" r="3.2" {...common} /><path d="M5.5 20a6.7 6.7 0 0 1 13 0" {...common} /></>,
-    check: <><rect x="5" y="4" width="12" height="16" rx="2.5" {...common} /><path d="M9 8h4M9 12h3M9 16h2.5M14 15l1.4 1.4L19 12.8" {...common} /></>,
-    userCheck: <><circle cx="9" cy="8" r="3" {...common} /><path d="M3.8 19.5a5.5 5.5 0 0 1 9.2-3.7" {...common} /><path d="m14.5 14.5 2 2 4-5" {...common} /></>,
-    network: <><circle cx="7" cy="7.5" r="2.4" {...common} /><circle cx="17" cy="7.5" r="2.4" {...common} /><circle cx="12" cy="17" r="2.4" {...common} /><path d="m8.2 9.7 2.6 5M15.8 9.7l-2.6 5M9.4 7.5h5.2" {...common} /></>,
-    users: <><circle cx="9" cy="8" r="3" {...common} /><path d="M3.8 19a5.8 5.8 0 0 1 10.4 0" {...common} /><path d="M16 6.4a2.8 2.8 0 0 1 0 5.2M17.5 14.4c1.4.7 2.4 2.2 2.9 4.2" {...common} /></>,
-    target: <><circle cx="12" cy="12" r="8" {...common} /><circle cx="12" cy="12" r="4.2" {...common} /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" {...common} /></>,
-    file: <><path d="M7 3.5h7l4 4V20.5H7z" {...common} /><path d="M14 3.5v5h5M9.5 13h5M9.5 16.5h4" {...common} /></>,
-    doc: <><path d="M6.5 4h11v16h-11z" {...common} /><path d="M9.5 8h5M9.5 12h5M9.5 16h3.5" {...common} /></>,
-    medical: <><path d="M12 20s-7-4.4-7-10.2A4 4 0 0 1 12 7a4 4 0 0 1 7 2.8C19 15.6 12 20 12 20z" {...common} /><path d="M9 12h6M12 9v6" {...common} /></>,
-    graduation: <><path d="m3 9 9-4 9 4-9 4z" {...common} /><path d="M7 11.5v4.2c2.7 1.8 7.3 1.8 10 0v-4.2M21 9v5" {...common} /></>,
-    wallet: <><path d="M5 7.5h13.5A2.5 2.5 0 0 1 21 10v7.5A2.5 2.5 0 0 1 18.5 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h12" {...common} /><path d="M16 12.5h5v4h-5z" {...common} /></>,
-    building: <><path d="M4 20h16M6 20V8l6-4 6 4v12" {...common} /><path d="M9 11h.01M12 11h.01M15 11h.01M9 15h.01M12 15h.01M15 15h.01" {...common} /></>,
-    compass: <><circle cx="12" cy="12" r="8" {...common} /><path d="m15.5 8.5-2.1 4.9-4.9 2.1 2.1-4.9z" {...common} /></>,
-    note: <><path d="M6.5 4h11v16h-11z" {...common} /><path d="M9.5 8h5M9.5 12h5M9.5 16h3.2" {...common} /></>,
-    calendar: <><rect x="5" y="5" width="14" height="15" rx="2" {...common} /><path d="M8 3v4M16 3v4M5 10h14M9 14h.01M13 14h.01M17 14h.01" {...common} /></>,
-  };
+  const Icon = name;
   return (
     <span style={{ ...sectionIconWrapStyle, ...(active ? sectionIconActiveStyle : null) }}>
-      <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true">{paths[name]}</svg>
+      <Icon size={19} strokeWidth={1.9} color={active ? "#1e3a5f" : "#475569"} aria-hidden="true" />
     </span>
   );
 }
