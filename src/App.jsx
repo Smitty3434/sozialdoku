@@ -1169,6 +1169,19 @@ function AppContent() {
     return true;
   };
 
+  const resetUserPassword = async (id) => {
+    if (!permissions.canManageUsers) return deny("Nur Admins dürfen Zugänge neu setzen.");
+    const { data, error } = await supabase.functions.invoke("admin-reset-user-password", {
+      body: { userId: id },
+    });
+    if (error || data?.error) {
+      showToast(data?.error || error?.message || "Zugang konnte nicht neu gesetzt werden.", "#c0392b");
+      return null;
+    }
+    showToast("Temporäres Passwort erstellt ✓");
+    return data;
+  };
+
   const saveFallaktenFreigaben = async (nutzerId, grants) => {
     if (!permissions.canManageUsers) return deny("Nur Admins dürfen Fallaktenrechte verwalten.");
     const rows = grants
@@ -1328,7 +1341,7 @@ function AppContent() {
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
             {view === "stunden" && <StundenView clients={visibleClients} eintraege={eintraege} />}
             {view === "kibericht" && <KIBerichtView clients={visibleClients} eintraege={eintraege} user={user} kiSettings={kiSettings} />}
-            {view === "nutzer" && permissions.canManageUsers && <NutzerView users={users} clients={clients} fallaktenFreigaben={fallaktenFreigaben} onToggle={toggleNutzer} onCreateUser={createSecureUser} onUpdateUser={updateSecureUser} onSaveFreigaben={saveFallaktenFreigaben} showToast={showToast} />}
+            {view === "nutzer" && permissions.canManageUsers && <NutzerView users={users} clients={clients} fallaktenFreigaben={fallaktenFreigaben} onToggle={toggleNutzer} onCreateUser={createSecureUser} onUpdateUser={updateSecureUser} onResetPassword={resetUserPassword} onSaveFreigaben={saveFallaktenFreigaben} showToast={showToast} />}
             {view === "einstellungen" && permissions.canUseAdminSettings && <KIEinstellungenView kiSettings={kiSettings} setKiSettings={setKiSettings} showToast={showToast} />}
             {view === "dsgvo" && <DsgvoView />}
           </main>
@@ -3243,11 +3256,14 @@ function VorlagenView({ vorlagen }) {
   );
 }
 
-function NutzerView({ users, clients, fallaktenFreigaben, onToggle, onCreateUser, onUpdateUser, onSaveFreigaben, showToast }) {
+function NutzerView({ users, clients, fallaktenFreigaben, onToggle, onCreateUser, onUpdateUser, onResetPassword, onSaveFreigaben, showToast }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "demo123", rolle: "Fachkraft", einrichtung: EINRICHTUNGEN[0], aktiv: true });
   const [editUser, setEditUser] = useState(null);
   const [editForm, setEditForm] = useState({ name: "", rolle: "Fachkraft", einrichtung: EINRICHTUNGEN[0], aktiv: true });
+  const [resetUser, setResetUser] = useState(null);
+  const [resetResult, setResetResult] = useState(null);
+  const [resetLoading, setResetLoading] = useState(false);
   const [freigabeUser, setFreigabeUser] = useState(null);
   const [grantDraft, setGrantDraft] = useState({});
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -3267,6 +3283,11 @@ function NutzerView({ users, clients, fallaktenFreigaben, onToggle, onCreateUser
       .map(f => [String(f.klient_id), { darf_ansehen: Boolean(f.darf_ansehen), darf_bearbeiten: Boolean(f.darf_bearbeiten) }]));
     setGrantDraft(existing);
     setFreigabeUser(u);
+  };
+  const openPasswordReset = (u) => {
+    setResetUser(u);
+    setResetResult(null);
+    setResetLoading(false);
   };
   const setGrant = (clientId, field, value) => {
     setGrantDraft(prev => {
@@ -3303,6 +3324,12 @@ function NutzerView({ users, clients, fallaktenFreigaben, onToggle, onCreateUser
     });
     if (saved) setEditUser(null);
   };
+  const createTemporaryPassword = async () => {
+    setResetLoading(true);
+    const result = await onResetPassword(resetUser.id);
+    setResetLoading(false);
+    if (result?.tempPassword) setResetResult(result);
+  };
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
@@ -3322,11 +3349,35 @@ function NutzerView({ users, clients, fallaktenFreigaben, onToggle, onCreateUser
               <span style={{ background: u.aktiv ? "#dcfce7" : "#fee2e2", color: u.aktiv ? "#16a34a" : "#dc2626", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{u.aktiv ? "Aktiv" : "Deaktiviert"}</span>
               <button onClick={() => openEdit(u)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>Bearbeiten</button>
               <button onClick={() => openFreigaben(u)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>Fallaktenrechte</button>
+              <button onClick={() => openPasswordReset(u)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>Zugang neu setzen</button>
               <button onClick={() => onToggle(u.id, !u.aktiv)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>{u.aktiv ? "Deaktivieren" : "Aktivieren"}</button>
             </div>
           </div>
         ))}
       </div>
+      {resetUser && (
+        <Modal onClose={() => setResetUser(null)}>
+          <h2 style={modalTitleStyle}><SectionIcon name={AlertTriangle} />Zugang neu setzen</h2>
+          <p style={{ margin: "0 0 14px", color: "#475569", fontSize: 14, lineHeight: 1.55 }}>
+            Für <strong>{resetUser.name}</strong> wird serverseitig ein neues temporäres Passwort gesetzt. Das Passwort wird nur nach erfolgreicher Änderung einmal hier angezeigt.
+          </p>
+          {resetResult ? (
+            <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: 14, marginBottom: 16 }}>
+              <p style={{ margin: "0 0 8px", fontSize: 12, color: "#64748b", fontWeight: 800, textTransform: "uppercase" }}>Temporäres Passwort</p>
+              <input readOnly value={resetResult.tempPassword} style={{ ...inputStyle, fontWeight: 800, letterSpacing: .3, background: "#fff" }} onFocus={e => e.target.select()} />
+              <p style={{ margin: "8px 0 0", fontSize: 12, color: "#64748b" }}>Bitte kontrolliert an die berechtigte Person übergeben. Nach dem Schließen wird es in der App nicht erneut angezeigt.</p>
+            </div>
+          ) : (
+            <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, padding: "12px 14px", marginBottom: 16, color: "#92400e", fontSize: 13, lineHeight: 1.5 }}>
+              Diese Aktion ersetzt das bisherige Passwort. Bestehende Rollen und Fallaktenrechte bleiben unverändert.
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            <button onClick={() => setResetUser(null)} style={btnSecondary}>{resetResult ? "Schließen" : "Abbrechen"}</button>
+            {!resetResult && <button onClick={createTemporaryPassword} disabled={resetLoading} style={{ ...btnPrimary, opacity: resetLoading ? .65 : 1 }}>{resetLoading ? "Wird gesetzt..." : "Temporäres Passwort setzen"}</button>}
+          </div>
+        </Modal>
+      )}
       {editUser && (
         <Modal onClose={() => setEditUser(null)}>
           <h2 style={modalTitleStyle}><SectionIcon name={UserCheck} />Benutzer bearbeiten</h2>
