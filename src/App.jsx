@@ -1127,11 +1127,25 @@ function AppContent() {
   };
 
   // ── Nutzer verwalten (Admin) ────────────────────────────────────
+  const updateSecureUser = async (id, updates) => {
+    if (!permissions.canManageUsers) return deny("Nur Admins dürfen Benutzer bearbeiten.");
+    const { data, error } = await supabase.functions.invoke("admin-update-user", {
+      body: { userId: id, ...updates },
+    });
+    if (error || data?.error) {
+      showToast(data?.error || error?.message || "Benutzer konnte nicht aktualisiert werden.", "#c0392b");
+      return false;
+    }
+    if (data?.user) {
+      setUsers(prev => prev.map(u => u.id === id ? { ...u, ...data.user } : u).sort((a, b) => String(a.name).localeCompare(String(b.name))));
+      if (String(id) === String(user?.id)) setUser(prev => ({ ...prev, ...data.user }));
+    }
+    showToast("Benutzer aktualisiert ✓");
+    return true;
+  };
+
   const toggleNutzer = async (id, aktiv) => {
-    if (!permissions.canManageUsers) return deny("Nur Admins dürfen Nutzer aktivieren oder deaktivieren.");
-    const { data } = await supabase.from("nutzer").update({ aktiv, updated_by: session.user.id }).eq("id", id).select().single();
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, ...(data || { aktiv }) } : u));
-    showToast(aktiv ? "Nutzer aktiviert ✓" : "Nutzer deaktiviert", aktiv ? "#16825a" : "#c0392b");
+    await updateSecureUser(id, { aktiv });
   };
 
   const createSecureUser = async (form) => {
@@ -1314,7 +1328,7 @@ function AppContent() {
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
             {view === "stunden" && <StundenView clients={visibleClients} eintraege={eintraege} />}
             {view === "kibericht" && <KIBerichtView clients={visibleClients} eintraege={eintraege} user={user} kiSettings={kiSettings} />}
-            {view === "nutzer" && permissions.canManageUsers && <NutzerView users={users} clients={clients} fallaktenFreigaben={fallaktenFreigaben} onToggle={toggleNutzer} onCreateUser={createSecureUser} onSaveFreigaben={saveFallaktenFreigaben} showToast={showToast} />}
+            {view === "nutzer" && permissions.canManageUsers && <NutzerView users={users} clients={clients} fallaktenFreigaben={fallaktenFreigaben} onToggle={toggleNutzer} onCreateUser={createSecureUser} onUpdateUser={updateSecureUser} onSaveFreigaben={saveFallaktenFreigaben} showToast={showToast} />}
             {view === "einstellungen" && permissions.canUseAdminSettings && <KIEinstellungenView kiSettings={kiSettings} setKiSettings={setKiSettings} showToast={showToast} />}
             {view === "dsgvo" && <DsgvoView />}
           </main>
@@ -3229,12 +3243,24 @@ function VorlagenView({ vorlagen }) {
   );
 }
 
-function NutzerView({ users, clients, fallaktenFreigaben, onToggle, onCreateUser, onSaveFreigaben, showToast }) {
+function NutzerView({ users, clients, fallaktenFreigaben, onToggle, onCreateUser, onUpdateUser, onSaveFreigaben, showToast }) {
   const [showNew, setShowNew] = useState(false);
   const [form, setForm] = useState({ name: "", email: "", password: "demo123", rolle: "Fachkraft", einrichtung: EINRICHTUNGEN[0], aktiv: true });
+  const [editUser, setEditUser] = useState(null);
+  const [editForm, setEditForm] = useState({ name: "", rolle: "Fachkraft", einrichtung: EINRICHTUNGEN[0], aktiv: true });
   const [freigabeUser, setFreigabeUser] = useState(null);
   const [grantDraft, setGrantDraft] = useState({});
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const setEdit = (k, v) => setEditForm(p => ({ ...p, [k]: v }));
+  const openEdit = (u) => {
+    setEditForm({
+      name: u.name || "",
+      rolle: ROLLEN.includes(u.rolle) ? u.rolle : "Fachkraft",
+      einrichtung: u.einrichtung || EINRICHTUNGEN[0],
+      aktiv: u.aktiv !== false,
+    });
+    setEditUser(u);
+  };
   const openFreigaben = (u) => {
     const existing = Object.fromEntries((fallaktenFreigaben || [])
       .filter(f => String(f.nutzer_id) === String(u.id))
@@ -3267,6 +3293,16 @@ function NutzerView({ users, clients, fallaktenFreigaben, onToggle, onCreateUser
     setShowNew(false);
     setForm({ name: "", email: "", password: "demo123", rolle: "Fachkraft", einrichtung: EINRICHTUNGEN[0], aktiv: true });
   };
+  const saveEditUser = async () => {
+    if (!editForm.name.trim()) return showToast("Name ist erforderlich.", "#c0392b");
+    const saved = await onUpdateUser(editUser.id, {
+      name: editForm.name,
+      rolle: editForm.rolle,
+      einrichtung: editForm.einrichtung,
+      aktiv: editForm.aktiv,
+    });
+    if (saved) setEditUser(null);
+  };
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
@@ -3284,12 +3320,32 @@ function NutzerView({ users, clients, fallaktenFreigaben, onToggle, onCreateUser
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <span style={{ ...rolleStyle(u.rolle), padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{u.rolle}</span>
               <span style={{ background: u.aktiv ? "#dcfce7" : "#fee2e2", color: u.aktiv ? "#16a34a" : "#dc2626", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>{u.aktiv ? "Aktiv" : "Deaktiviert"}</span>
+              <button onClick={() => openEdit(u)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>Bearbeiten</button>
               <button onClick={() => openFreigaben(u)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>Fallaktenrechte</button>
               <button onClick={() => onToggle(u.id, !u.aktiv)} style={{ ...btnSecondary, fontSize: 12, padding: "6px 14px" }}>{u.aktiv ? "Deaktivieren" : "Aktivieren"}</button>
             </div>
           </div>
         ))}
       </div>
+      {editUser && (
+        <Modal onClose={() => setEditUser(null)}>
+          <h2 style={modalTitleStyle}><SectionIcon name={UserCheck} />Benutzer bearbeiten</h2>
+          <p style={{ margin: "0 0 16px", fontSize: 13, color: "#64748b" }}>{editUser.email || "E-Mail aus Auth-Profil"} · Änderungen gelten für Profil und Rechteverhalten.</p>
+          <FormField label="Vollständiger Name"><input value={editForm.name} onChange={e => setEdit("name", e.target.value)} style={inputStyle} placeholder="Vor- und Nachname" /></FormField>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <FormField label="Rolle"><select value={editForm.rolle} onChange={e => setEdit("rolle", e.target.value)} style={inputStyle}>{ROLLEN.map(r => <option key={r}>{r}</option>)}</select></FormField>
+            <FormField label="Einrichtung"><select value={editForm.einrichtung} onChange={e => setEdit("einrichtung", e.target.value)} style={inputStyle}>{EINRICHTUNGEN.map(e => <option key={e}>{e}</option>)}</select></FormField>
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 10, padding: "12px 14px", margin: "4px 0 16px", color: "#334155", fontSize: 13, fontWeight: 700 }}>
+            <input type="checkbox" checked={editForm.aktiv} onChange={e => setEdit("aktiv", e.target.checked)} />
+            Benutzer ist aktiv
+          </label>
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button onClick={() => setEditUser(null)} style={btnSecondary}>Abbrechen</button>
+            <button onClick={saveEditUser} style={btnPrimary}>Änderungen speichern</button>
+          </div>
+        </Modal>
+      )}
       {showNew && (
         <Modal onClose={() => setShowNew(false)}>
           <h2 style={{ fontFamily: "'DM Serif Display',serif", fontSize: 22, marginBottom: 20 }}>Neuen Nutzer anlegen</h2>
