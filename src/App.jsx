@@ -357,6 +357,7 @@ function AppContent() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
+  const [detailReturnView, setDetailReturnView] = useState("clients");
   const [clients, setClients] = useState([]);
   const [eintraege, setEintraege] = useState({});
   const [fallakten, setFallakten] = useState({});
@@ -432,6 +433,12 @@ function AppContent() {
   const deny = (message = "Dafür fehlen deiner Rolle die erforderlichen Rechte.") => {
     showToast(message, "#c0392b");
     return false;
+  };
+  const openClientDetail = (client, returnView = view) => {
+    if (!client) return;
+    setSelectedClient(client);
+    setDetailReturnView(returnView || "clients");
+    setView("detail");
   };
 
   // ── Profil laden ────────────────────────────────────────────────
@@ -1276,13 +1283,13 @@ function AppContent() {
           </div>
 
           <main className="main-content">
-            {view === "dashboard" && <Dashboard clients={visibleClients} fallakten={fallakten} eintraege={eintraege} termine={visibleTermine} setView={setView} setSelectedClient={setSelectedClient} user={user} permissions={permissions} />}
-            {view === "clients" && <ClientsView clients={filteredClients} allClients={visibleClients} search={search} setSearch={setSearch} statusFilter={clientStatusFilter} setStatusFilter={setClientStatusFilter} einrichtungFilter={clientEinrichtungFilter} setEinrichtungFilter={setClientEinrichtungFilter} internFilter={clientInternFilter} setInternFilter={setClientInternFilter} einrichtungen={visibleEinrichtungen} internOptions={visibleInternOptions} permissions={permissions} onSelect={(c) => { setSelectedClient(c); setView("detail"); }} onNew={permissions.canCreateClient ? () => setShowNewClient(true) : null} />}
+            {view === "dashboard" && <Dashboard clients={visibleClients} fallakten={fallakten} eintraege={eintraege} termine={visibleTermine} setView={setView} onOpenClient={(c) => openClientDetail(c, "dashboard")} user={user} permissions={permissions} />}
+            {view === "clients" && <ClientsView clients={filteredClients} allClients={visibleClients} search={search} setSearch={setSearch} statusFilter={clientStatusFilter} setStatusFilter={setClientStatusFilter} einrichtungFilter={clientEinrichtungFilter} setEinrichtungFilter={setClientEinrichtungFilter} internFilter={clientInternFilter} setInternFilter={setClientInternFilter} einrichtungen={visibleEinrichtungen} internOptions={visibleInternOptions} permissions={permissions} onSelect={(c) => openClientDetail(c, "clients")} onNew={permissions.canCreateClient ? () => setShowNewClient(true) : null} />}
             {view === "detail" && selectedClient && canViewClient(selectedClient.id) && (
               <DetailView
                 client={selectedClient}
                 eintraege={eintraege[selectedClient.id] || []}
-                onBack={() => setView("clients")}
+                onBack={() => setView(detailReturnView || "clients")}
                 canEdit={selectedClientCanEdit}
                 permissions={permissions}
                 onNewEintrag={selectedClientCanEdit ? openNewEintrag : null}
@@ -1303,7 +1310,7 @@ function AppContent() {
             {view === "detail" && selectedClient && !canViewClient(selectedClient.id) && <AccessDeniedView setView={setView} />}
             {view === "notizen" && <NotizenView notizen={visibleNotizen} onAdd={addNotiz} onUpdate={updateNotiz} onDelete={deleteNotiz} user={user} clients={visibleClients} showToast={showToast} />}
             {view === "kalender" && <KalenderView termine={visibleTermine} outlookConnection={outlookConnection} outlookEvents={outlookEvents} outlookEventsLoading={outlookEventsLoading} outlookEventsError={outlookEventsError} outlookRelevantOnly={outlookRelevantOnly} setOutlookRelevantOnly={setOutlookRelevantOnly} onLoadOutlookEvents={(relevantOnly = outlookRelevantOnly) => loadOutlookEvents(relevantOnly, false)} onImportTermine={importTermine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} onConnectOutlook={startOutlookConnect} onRefreshOutlook={refreshOutlookStatus} onSyncOutlookTermin={syncOutlookTermin} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} />}
-            {view === "benachrichtigungen" && <BenachrichtigungenView termine={visibleTermine} clients={visibleClients} setView={setView} setSelectedClient={setSelectedClient} />}
+            {view === "benachrichtigungen" && <BenachrichtigungenView termine={visibleTermine} clients={visibleClients} onOpenClient={(c) => openClientDetail(c, "benachrichtigungen")} />}
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
             {view === "stunden" && <StundenView clients={visibleClients} eintraege={eintraege} />}
             {view === "kibericht" && <KIBerichtView clients={visibleClients} eintraege={eintraege} user={user} kiSettings={kiSettings} />}
@@ -1519,9 +1526,45 @@ function Sidebar({ view, setView, user, onLogout, isOpen, notifications, permiss
   );
 }
 
-function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelectedClient, user, permissions }) {
+function DashboardSection({ id, title, summary, count, open, onToggle, children }) {
+  return (
+    <section style={{ ...card, padding: 0, overflow: "hidden", marginBottom: 14 }}>
+      <button
+        type="button"
+        onClick={() => onToggle(id)}
+        style={{
+          width: "100%",
+          border: "none",
+          background: open ? "#f8fafc" : "#fff",
+          padding: "17px 20px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          gap: 14,
+          cursor: "pointer",
+          textAlign: "left",
+          fontFamily: "'DM Sans',sans-serif",
+        }}
+        aria-expanded={open}
+      >
+        <div style={{ minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: "#1e293b" }}>{title}</p>
+          <p style={{ margin: "4px 0 0", fontSize: 12, color: "#64748b", lineHeight: 1.4 }}>{summary}</p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <span style={{ minWidth: 34, textAlign: "center", border: "1px solid #e2e8f0", background: "#f8fafc", color: "#334155", borderRadius: 999, padding: "4px 9px", fontSize: 12, fontWeight: 800 }}>{count}</span>
+          <span style={{ color: "#64748b", fontSize: 12, fontWeight: 700 }}>{open ? "Schließen" : "Öffnen"}</span>
+        </div>
+      </button>
+      {open && <div style={{ padding: "4px 20px 18px", borderTop: "1px solid #eef2f6" }}>{children}</div>}
+    </section>
+  );
+}
+
+function Dashboard({ clients, fallakten, eintraege, termine, setView, onOpenClient, user, permissions }) {
   const [clientSearch, setClientSearch] = useState("");
   const [clientQuickFilter, setClientQuickFilter] = useState("alle");
+  const [openDashboardSection, setOpenDashboardSection] = useState("");
   const myClients = clients.filter(c => (fallakten?.[c.id]?.intern || []).some(i => String(i.userId) === String(user?.id)));
   const dashboardClients = permissions.canViewAllCases ? clients : myClients;
   const dashboardClientIds = new Set(dashboardClients.map(c => String(c.id)));
@@ -1530,12 +1573,16 @@ function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelecte
   const allEntries = Object.entries(eintraege)
     .filter(([clientId]) => dashboardClientIds.has(String(clientId)))
     .flatMap(([clientId, items]) => (items || []).map(item => ({ ...item, klientId: clientId })));
-  const stunden = allEntries.filter(e => e.typ === "Stunden").reduce((s, e) => s + (e.stunden || 0), 0);
+  const hoursEntries = allEntries.filter(e => e.typ === "Stunden").sort((a, b) => new Date(b.datum) - new Date(a.datum));
+  const stunden = hoursEntries.reduce((s, e) => s + (e.stunden || 0), 0);
   const recent = [...allEntries].sort((a, b) => new Date(b.datum) - new Date(a.datum)).slice(0, 4);
   const getClientName = (id) => clients.find(c => c.id == id)?.name || "–";
   const getClientId = (entry) => entry.klientId || Object.entries(eintraege).find(([, v]) => v.some(e => e.id === entry.id))?.[0];
   const today = ds(new Date());
-  const nextTermine = [...termine].sort((a, b) => new Date(a.datum) - new Date(b.datum)).filter(t => t.status !== "erledigt" && t.datum >= today && (!t.klientId || dashboardClientIds.has(String(t.klientId)))).slice(0, 3);
+  const nextTermine = [...termine]
+    .sort((a, b) => new Date(`${a.datum}T${a.uhrzeit || "00:00"}`) - new Date(`${b.datum}T${b.uhrzeit || "00:00"}`))
+    .filter(t => t.status !== "erledigt" && (getTerminEndDate(t) || t.datum) >= today && (!t.klientId || dashboardClientIds.has(String(t.klientId))))
+    .slice(0, 4);
   const lastEntryByClient = Object.fromEntries(Object.entries(eintraege)
     .filter(([clientId]) => dashboardClientIds.has(String(clientId)))
     .map(([clientId, items]) => [clientId, [...(items || [])].sort((a, b) => new Date(b.datum) - new Date(a.datum))[0]?.datum || ""]));
@@ -1552,66 +1599,75 @@ function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelecte
       return matchesSearch && matchesQuickFilter;
     })
     .sort((a, b) => clientQuickFilter === "zuletzt" ? new Date(lastEntryByClient[b.id] || 0) - new Date(lastEntryByClient[a.id] || 0) : 0);
+  const openClientById = (id) => {
+    const client = clients.find(c => String(c.id) === String(id));
+    if (client) onOpenClient(client);
+  };
+  const toggleSection = (section) => setOpenDashboardSection(prev => prev === section ? "" : section);
   return (
     <div>
       <h1 style={pageTitle}>Dashboard</h1>
       <p style={pageSubtitle}>{permissions.canViewAllCases ? `Rollenübersicht (${permissions.role})` : "Persönliche Arbeitsübersicht"} für {user?.name.split(" ")[0]}</p>
-      <div className="stats-grid" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 18, marginBottom: 28 }}>
-        {[{ label: permissions.canViewAllCases ? "Sichtbare Fallakten" : "Meine Klienten", value: total, icon: "👥", color: "#1a4480" }, { label: "Offene Aufgaben", value: offeneAufgaben.length, icon: "☑", color: "#475569" }, { label: "Geleistete Stunden", value: stunden.toFixed(1) + " h", icon: "⏱", color: "#b45309" }].map(s => (
-          <div key={s.label} style={{ background: "#fff", borderRadius: 14, padding: "20px 22px", boxShadow: "0 2px 12px rgba(0,0,0,.06)", display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ width: 46, height: 46, borderRadius: 12, background: s.color + "18", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>{s.icon}</div>
-            <div><p style={{ margin: 0, fontSize: 24, fontWeight: 700, color: s.color, fontFamily: "'DM Serif Display',serif" }}>{s.value}</p><p style={{ margin: 0, fontSize: 12, color: "#64748b", marginTop: 2 }}>{s.label}</p></div>
+      <div style={{ marginBottom: 22 }}>
+        <DashboardSection
+          id="clients"
+          title={permissions.canViewAllCases ? "Sichtbare Fallakten" : "Meine Klienten"}
+          summary={permissions.canViewAllCases ? "Gesamtbestand entsprechend deiner Rolle durchsuchen." : "Zugeordnete und freigegebene Klienten direkt öffnen."}
+          count={`${visibleDashboardClients.length}/${total}`}
+          open={openDashboardSection === "clients"}
+          onToggle={toggleSection}
+        >
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 10, alignItems: "center", marginBottom: 12 }}>
+            <input value={clientSearch} onChange={e => setClientSearch(e.target.value)} placeholder="Name oder Aktenzeichen suchen…" style={{ ...inputStyle, fontSize: 14, padding: "11px 13px" }} />
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {[
+                { id: "alle", label: "Alle" },
+                { id: "aktiv", label: "Aktive" },
+                { id: "offene", label: "Offene Aufgaben" },
+                { id: "zuletzt", label: "Zuletzt bearbeitet" },
+              ].map(filter => (
+                <button key={filter.id} type="button" onClick={() => setClientQuickFilter(filter.id)} style={{ border: clientQuickFilter === filter.id ? "1px solid #64748b" : "1px solid #e2e8f0", background: clientQuickFilter === filter.id ? "#f1f5f9" : "#fff", color: clientQuickFilter === filter.id ? "#1e293b" : "#64748b", borderRadius: 999, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{filter.label}</button>
+              ))}
+            </div>
           </div>
-        ))}
-      </div>
-      <div style={{ ...card, marginBottom: 20 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 12 }}>
-          <div>
-            <h2 style={{ ...cardTitle, marginBottom: 3 }}>Klientensuche</h2>
-            <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>{permissions.canViewAllCases ? "Sichtbare Fallakten durchsuchen und eingrenzen." : "Meine Klienten durchsuchen und eingrenzen."}</p>
-          </div>
-          <span style={{ color: "#94a3b8", fontSize: 12, fontWeight: 700, paddingTop: 3 }}>{visibleDashboardClients.length} von {dashboardClients.length}</span>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))", gap: 10, alignItems: "center" }}>
-          <input value={clientSearch} onChange={e => setClientSearch(e.target.value)} placeholder="Name oder Aktenzeichen suchen…" style={{ ...inputStyle, fontSize: 14, padding: "11px 13px" }} />
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {[
-              { id: "alle", label: "Alle" },
-              { id: "aktiv", label: "Aktive" },
-              { id: "offene", label: "Offene Aufgaben" },
-              { id: "zuletzt", label: "Zuletzt bearbeitet" },
-            ].map(filter => (
-              <button key={filter.id} onClick={() => setClientQuickFilter(filter.id)} style={{ border: clientQuickFilter === filter.id ? "1px solid #64748b" : "1px solid #e2e8f0", background: clientQuickFilter === filter.id ? "#f1f5f9" : "#fff", color: clientQuickFilter === filter.id ? "#1e293b" : "#64748b", borderRadius: 999, padding: "6px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>{filter.label}</button>
-            ))}
-          </div>
-        </div>
-      </div>
-      <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        <div style={card}>
-          <h2 style={cardTitle}>{permissions.canViewAllCases ? "Sichtbare Fallakten" : "Meine Klienten"}</h2>
           {dashboardClients.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine interne Zuständigkeit hinterlegt.</p>}
           {dashboardClients.length > 0 && visibleDashboardClients.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine passenden Klienten gefunden.</p>}
           {visibleDashboardClients.map(c => (
             <div key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "11px 0", borderBottom: "1px solid #f1f5f9" }}>
               <div style={{ minWidth: 0 }}>
-                <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.name}</p>
+                <button type="button" onClick={() => onOpenClient(c)} style={{ background: "none", border: "none", padding: 0, margin: 0, cursor: "pointer", fontFamily: "'DM Sans',sans-serif", fontWeight: 800, fontSize: 14, color: "#1a4480", textAlign: "left", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>{c.name}</button>
                 <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{c.aktenzeichen || "ohne Aktenzeichen"} · {c.status || "ohne Status"}{lastEntryByClient[c.id] ? ` · zuletzt ${formatDate(lastEntryByClient[c.id])}` : ""}</p>
               </div>
-              <button onClick={() => { setSelectedClient(c); setView("detail"); }} style={{ ...btnSecondary, fontSize: 11, padding: "5px 10px", whiteSpace: "nowrap" }}>Öffnen</button>
             </div>
           ))}
           <button onClick={() => setView("clients")} style={{ ...btnSecondary, width: "100%", justifyContent: "center", marginTop: 12, fontSize: 13 }}>Alle Fallakten →</button>
-        </div>
-        <div style={card}>
-          <h2 style={cardTitle}>Offene Aufgaben</h2>
+        </DashboardSection>
+        <DashboardSection id="tasks" title="Offene Aufgaben" summary="Aktuelle Aufgaben aus den sichtbaren Fallakten." count={offeneAufgaben.length} open={openDashboardSection === "tasks"} onToggle={toggleSection}>
           {offeneAufgaben.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine offenen Aufgaben in deinen Akten.</p>}
           {offeneAufgaben.slice(0, 5).map(a => (
             <div key={a.id} style={{ padding: "10px 0", borderBottom: "1px solid #f1f5f9" }}>
               <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#1e293b" }}>{a.titel}</p>
-              <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{a.klientName} · {a.status}{a.datum ? ` · ${formatDate(a.datum)}` : ""}</p>
+              <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>
+                <button type="button" onClick={() => openClientById(a.klientId)} style={{ background: "none", border: "none", padding: 0, color: "#1a4480", cursor: "pointer", fontFamily: "'DM Sans',sans-serif", fontSize: 12, fontWeight: 700 }}>{a.klientName}</button>
+                {" · "}{a.status}{a.datum ? ` · ${formatDate(a.datum)}` : ""}
+              </p>
             </div>
           ))}
-        </div>
+        </DashboardSection>
+        <DashboardSection id="hours" title="Geleistete Stunden" summary="Dokumentierte Stunden aus den sichtbaren Akten." count={`${stunden.toFixed(1)} h`} open={openDashboardSection === "hours"} onToggle={toggleSection}>
+          {hoursEntries.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Noch keine Stunden dokumentiert.</p>}
+          {hoursEntries.slice(0, 6).map(e => (
+            <div key={e.id} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "10px 0", borderBottom: "1px solid #f1f5f9" }}>
+              <div style={{ minWidth: 0 }}>
+                <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.titel || "Dokumentierte Stunde"}</p>
+                <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{getClientName(e.klientId)} · {formatDate(e.datum)}</p>
+              </div>
+              <span style={{ color: "#334155", fontSize: 13, fontWeight: 800, whiteSpace: "nowrap" }}>{Number(e.stunden || 0).toFixed(1)} h</span>
+            </div>
+          ))}
+        </DashboardSection>
+      </div>
+      <div className="dash-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
         <div style={card}>
           <h2 style={cardTitle}>🕐 Zuletzt dokumentiert</h2>
           {recent.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Noch keine Dokumentationen in deinen Akten.</p>}
@@ -1624,7 +1680,7 @@ function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelecte
                   <p style={{ margin: 0, fontWeight: 600, fontSize: 13, color: "#1e293b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.titel}</p>
                   <p style={{ margin: 0, fontSize: 11, color: "#94a3b8" }}>{getClientName(cid)} · {formatDate(e.datum)}</p>
                 </div>
-                <button onClick={() => { setSelectedClient(clients.find(c => c.id == cid)); setView("detail"); }} style={{ ...btnSecondary, fontSize: 11, padding: "5px 10px" }}>→</button>
+                <button onClick={() => openClientById(cid)} style={{ ...btnSecondary, fontSize: 11, padding: "5px 10px" }}>→</button>
               </div>
             );
           })}
@@ -1634,11 +1690,15 @@ function Dashboard({ clients, fallakten, eintraege, termine, setView, setSelecte
           {nextTermine.length === 0 && <p style={{ color: "#94a3b8", fontSize: 14 }}>Keine anstehenden Termine.</p>}
           {nextTermine.map(t => (
             <div key={t.id} style={{ display: "flex", gap: 12, padding: "10px 0", borderBottom: "1px solid #f1f5f9", alignItems: "flex-start" }}>
-              <div style={{ background: "#e8f0fb", borderRadius: 8, padding: "6px 10px", textAlign: "center", minWidth: 44 }}>
+              <div style={{ background: "#f1f5f9", border: "1px solid #e2e8f0", borderRadius: 8, padding: "6px 10px", textAlign: "center", minWidth: 44 }}>
                 <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: "#1a4480" }}>{new Date(t.datum).getDate()}</p>
                 <p style={{ margin: 0, fontSize: 10, color: "#64748b" }}>{new Date(t.datum).toLocaleDateString("de-DE", { month: "short" })}</p>
               </div>
-              <div><p style={{ margin: 0, fontWeight: 600, fontSize: 13, color: "#1e293b" }}>{t.titel}</p><p style={{ margin: "2px 0", fontSize: 11, color: "#64748b" }}>{t.uhrzeit} · {t.ort}</p>{t.erinnerung && <span style={{ fontSize: 10, color: "#f59e0b" }}>🔔</span>}</div>
+              <div style={{ minWidth: 0 }}>
+                <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#1e293b" }}>{t.titel}</p>
+                <p style={{ margin: "2px 0", fontSize: 11, color: "#64748b" }}>{formatTerminDateRange(t)} · {t.uhrzeit || "ganztägig"}{t.ort ? ` · ${t.ort}` : ""}{t.klientId ? ` · ${getClientName(t.klientId)}` : ""}</p>
+                {t.erinnerung && <span style={{ display: "inline-block", marginTop: 3, fontSize: 10, color: "#92400e", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 999, padding: "2px 7px", fontWeight: 700 }}>Erinnerung</span>}
+              </div>
             </div>
           ))}
           <button onClick={() => setView("kalender")} style={{ ...btnSecondary, width: "100%", justifyContent: "center", marginTop: 12, fontSize: 13 }}>Alle Termine →</button>
@@ -3069,7 +3129,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   );
 }
 
-function BenachrichtigungenView({ termine, clients, setView, setSelectedClient }) {
+function BenachrichtigungenView({ termine, clients, onOpenClient }) {
   const getKlient = (id) => clients.find(c => c.id == id);
   const withDiff = termine.filter(t => t.status !== "erledigt").map(t => ({ ...t, diff: dayDiff(t.datum) })).sort((a, b) => a.diff - b.diff);
   const upcoming = withDiff.filter(t => t.diff >= 0 && t.diff <= 7 && t.erinnerung);
@@ -3103,7 +3163,7 @@ function BenachrichtigungenView({ termine, clients, setView, setSelectedClient }
               <div>
                 <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: "#1e293b" }}>{t.titel}</p>
                 <p style={{ margin: "3px 0", fontSize: 12, color: "#64748b" }}>{formatTerminDateRange(t)} · {t.uhrzeit || "ganztägig"} · {t.ort}</p>
-                {k && <button onClick={() => { setSelectedClient(k); setView("detail"); }} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "#1a4480", padding: 0, fontFamily: "'DM Sans',sans-serif", fontWeight: 600 }}>👤 {k.name} →</button>}
+                {k && <button onClick={() => onOpenClient(k)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "#1a4480", padding: 0, fontFamily: "'DM Sans',sans-serif", fontWeight: 600 }}>👤 {k.name} →</button>}
               </div>
               <DiffBadge diff={t.diff} />
             </div>;
