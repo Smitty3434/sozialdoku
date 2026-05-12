@@ -3266,6 +3266,10 @@ function NutzerView({ users, clients, fallaktenFreigaben, onToggle, onCreateUser
   const [resetLoading, setResetLoading] = useState(false);
   const [freigabeUser, setFreigabeUser] = useState(null);
   const [grantDraft, setGrantDraft] = useState({});
+  const [userSearch, setUserSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("alle");
+  const [statusFilter, setStatusFilter] = useState("alle");
+  const [einrichtungFilter, setEinrichtungFilter] = useState("alle");
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const setEdit = (k, v) => setEditForm(p => ({ ...p, [k]: v }));
   const openEdit = (u) => {
@@ -3330,14 +3334,48 @@ function NutzerView({ users, clients, fallaktenFreigaben, onToggle, onCreateUser
     setResetLoading(false);
     if (result?.tempPassword) setResetResult(result);
   };
+  const einrichtungen = [...new Set(users.map(u => u.einrichtung).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
+  const normalizedUserSearch = userSearch.trim().toLowerCase();
+  const filteredUsers = users.filter(u => {
+    const searchHaystack = `${u.name || ""} ${u.email || ""} ${u.einrichtung || ""}`.toLowerCase();
+    const matchesSearch = !normalizedUserSearch || searchHaystack.includes(normalizedUserSearch);
+    const matchesRole = roleFilter === "alle" || u.rolle === roleFilter;
+    const matchesStatus = statusFilter === "alle" || (statusFilter === "aktiv" ? u.aktiv !== false : u.aktiv === false);
+    const matchesEinrichtung = einrichtungFilter === "alle" || u.einrichtung === einrichtungFilter;
+    return matchesSearch && matchesRole && matchesStatus && matchesEinrichtung;
+  });
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
-        <div><h1 style={pageTitle}>Nutzerverwaltung</h1><p style={pageSubtitle}>{users.length} Nutzer · nur für Admins sichtbar</p></div>
+        <div><h1 style={pageTitle}>Nutzerverwaltung</h1><p style={pageSubtitle}>{filteredUsers.length} von {users.length} Nutzern · nur für Admins sichtbar</p></div>
         <button onClick={() => setShowNew(true)} style={btnPrimary}>+ Nutzer anlegen</button>
       </div>
+      <div style={{ ...card, marginBottom: 18 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(220px,1.4fr) repeat(3,minmax(150px,1fr))", gap: 10, alignItems: "end" }}>
+          <FormField label="Suche"><input value={userSearch} onChange={e => setUserSearch(e.target.value)} style={{ ...inputStyle, fontSize: 14, padding: "11px 13px" }} placeholder="Name, E-Mail oder Einrichtung" /></FormField>
+          <FormField label="Rolle"><select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} style={inputStyle}>
+            <option value="alle">Alle Rollen</option>
+            {ROLLEN.map(r => <option key={r} value={r}>{r}</option>)}
+          </select></FormField>
+          <FormField label="Status"><select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={inputStyle}>
+            <option value="alle">Alle Status</option>
+            <option value="aktiv">Aktiv</option>
+            <option value="inaktiv">Inaktiv</option>
+          </select></FormField>
+          <FormField label="Einrichtung"><select value={einrichtungFilter} onChange={e => setEinrichtungFilter(e.target.value)} style={inputStyle}>
+            <option value="alle">Alle Einrichtungen</option>
+            {einrichtungen.map(e => <option key={e} value={e}>{e}</option>)}
+          </select></FormField>
+        </div>
+        {(userSearch || roleFilter !== "alle" || statusFilter !== "alle" || einrichtungFilter !== "alle") && (
+          <button type="button" onClick={() => { setUserSearch(""); setRoleFilter("alle"); setStatusFilter("alle"); setEinrichtungFilter("alle"); }} style={{ ...btnSecondary, marginTop: 10, fontSize: 12, padding: "6px 12px" }}>Filter zurücksetzen</button>
+        )}
+      </div>
       <div style={{ display: "grid", gap: 12 }}>
-        {users.map(u => (
+        {filteredUsers.length === 0 && (
+          <div style={{ ...card, color: "#64748b", fontSize: 14, textAlign: "center" }}>Keine Benutzer passen zu Suche und Filtern.</div>
+        )}
+        {filteredUsers.map(u => (
           <div key={u.id} style={{ background: "#fff", borderRadius: 14, padding: "18px 22px", boxShadow: "0 2px 8px rgba(0,0,0,.05)", display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             <div style={{ width: 44, height: 44, borderRadius: "50%", background: u.aktiv ? "linear-gradient(135deg,#1a4480,#0d9e80)" : "#e2e8f0", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: u.aktiv ? "#fff" : "#94a3b8", flexShrink: 0 }}>{u.avatar}</div>
             <div style={{ flex: 1, minWidth: 160 }}>
