@@ -211,6 +211,16 @@ const parseIcsEndDateValue = (value = "", allDay = false) => {
   }
   return parsed.datum;
 };
+const finalizeIcsEvent = (event) => {
+  if (!event?.titel || !event?.datum) return null;
+  const fallbackEnd = inferTerminEndDate(event);
+  const parsedDtEnd = event.dtendRaw ? parseIcsEndDateValue(event.dtendRaw, event.allDay) : "";
+  const end_datum = parsedDtEnd || event.end_datum || fallbackEnd || "";
+  return {
+    ...event,
+    end_datum: end_datum && end_datum !== event.datum ? end_datum : null,
+  };
+};
 const parseIcsCalendar = (text) => {
   const lines = unfoldIcsLines(text);
   const events = [];
@@ -226,7 +236,8 @@ const parseIcsCalendar = (text) => {
       return;
     }
     if (prop === "END" && value.toUpperCase() === "VEVENT") {
-      if (current?.titel && current?.datum) events.push({ ...current, importId: current.external_uid || `${current.titel}-${current.datum}-${current.uhrzeit || ""}-${events.length}` });
+      const event = finalizeIcsEvent(current);
+      if (event) events.push({ ...event, importId: event.external_uid || `${event.titel}-${event.datum}-${event.uhrzeit || ""}-${events.length}` });
       current = null;
       return;
     }
@@ -236,7 +247,10 @@ const parseIcsCalendar = (text) => {
     if (prop === "LOCATION") current.ort = unescapeIcsText(value);
     if (prop === "DESCRIPTION") current.notiz = unescapeIcsText(value);
     if (prop === "DTSTART") Object.assign(current, parseIcsDateValue(value));
-    if (prop === "DTEND") current.end_datum = parseIcsEndDateValue(value, current.allDay);
+    if (prop === "DTEND") {
+      current.dtendRaw = value;
+      current.end_datum = parseIcsEndDateValue(value, current.allDay);
+    }
   });
   return events;
 };
@@ -2619,7 +2633,19 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
     acc[key] = [...(acc[key] || []), event];
     return acc;
   }, {});
+  const isAllDayCalendarEvent = (event) => Boolean(event.raw?.allDay || event.raw?.isAllDay || !event.uhrzeit || getTerminEndDate(event));
+  const calendarEventSegment = (event) => {
+    const key = event.calendarDate || event.datum;
+    const end = getTerminEndDate(event) || event.datum;
+    return {
+      starts: key === event.datum,
+      ends: key === end,
+      multiDay: Boolean(end && end !== event.datum),
+    };
+  };
   const sortCalendarEvents = (items) => [...items].sort((a, b) => {
+    const allDayDiff = Number(isAllDayCalendarEvent(b)) - Number(isAllDayCalendarEvent(a));
+    if (allDayDiff) return allDayDiff;
     if (a.quiet !== b.quiet) return a.quiet ? 1 : -1;
     return (a.uhrzeit || "00:00").localeCompare(b.uhrzeit || "00:00");
   });
@@ -2810,6 +2836,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
               const isSelected = key === selectedMonthDate;
               const realEventCount = dayEvents.filter(event => !event.quiet).length;
               const dayBackground = realEventCount >= 4 ? "#eef2f7" : realEventCount >= 2 ? "#f5f7fa" : "#fff";
+              const visibleDayEvents = dayEvents.slice(0, 4);
               return (
                 <button
                   key={key}
@@ -2817,29 +2844,58 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
                   onClick={() => setSelectedMonthDate(key)}
                   className="calendar-day-cell"
                   style={{
-                    minHeight: 138,
+                    minHeight: 152,
                     border: isSelected ? "1px solid #1e3a5f" : "1px solid transparent",
                     borderRadius: 10,
                     background: isSelected ? "#f8fafc" : dayBackground,
                     opacity: inCurrentMonth ? 1 : .42,
-                    padding: 11,
+                    padding: "9px 10px 10px",
                     textAlign: "left",
                     cursor: "pointer",
                     fontFamily: "'DM Sans',sans-serif",
                     boxShadow: isSelected ? "inset 0 0 0 1px rgba(30,58,95,.18)" : "none",
+                    overflow: "hidden",
                   }}
                 >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, marginBottom: 9 }}>
-                    <span className="calendar-day-title" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 999, background: isToday ? "#1e3a5f" : "transparent", color: isToday ? "#fff" : "#334155", fontSize: 13, fontWeight: isToday ? 900 : 800 }}>{format(day, "d")}</span>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6, marginBottom: 8, minHeight: 28 }}>
+                    <span className="calendar-day-title" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 999, background: isToday ? "#1e3a5f" : "transparent", color: isToday ? "#fff" : "#334155", fontSize: 13, fontWeight: isToday ? 900 : 800, lineHeight: 1 }}>{format(day, "d")}</span>
                     {dayEvents.length > 0 && <span style={{ background: isToday ? "#e0f2fe" : "#f1f5f9", border: "1px solid #dbe3ea", borderRadius: 999, color: isToday ? "#075985" : "#475569", fontSize: 10, fontWeight: 900, padding: "1px 6px" }}>{dayEvents.length}</span>}
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    {dayEvents.slice(0, 3).map(event => (
-                      <div key={event.id} className="calendar-day-event" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", borderLeft: `3px solid ${event.quiet ? "#cbd5e1" : event.source === "outlook" ? "#3b82f6" : "#64748b"}`, background: event.quiet ? "rgba(248,250,252,.72)" : "rgba(255,255,255,.78)", borderRadius: 6, padding: "3px 6px", color: event.quiet ? "#94a3b8" : "#334155", fontSize: 11, fontWeight: event.quiet ? 650 : 800 }}>
-                        {event.uhrzeit && <span style={{ color: "#64748b", fontWeight: 800 }}>{event.uhrzeit} </span>}{event.titel}
-                      </div>
-                    ))}
-                    {dayEvents.length > 3 && <div className="calendar-day-event" style={{ color: "#64748b", fontSize: 11, fontWeight: 800 }}>+{dayEvents.length - 3} weitere</div>}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, minHeight: 90 }}>
+                    {visibleDayEvents.map(event => {
+                      const segment = calendarEventSegment(event);
+                      const allDay = isAllDayCalendarEvent(event);
+                      const accent = event.quiet ? "#cbd5e1" : event.source === "outlook" ? "#3b82f6" : "#64748b";
+                      const barBg = event.quiet ? "#f1f5f9" : event.source === "outlook" ? "#dbeafe" : "#e2e8f0";
+                      return (
+                        <div
+                          key={event.id}
+                          className="calendar-day-event"
+                          style={{
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                            borderLeft: allDay ? "none" : `3px solid ${accent}`,
+                            background: allDay ? barBg : "rgba(255,255,255,.82)",
+                            borderTop: allDay ? `1px solid ${event.quiet ? "#e2e8f0" : "#cbd5e1"}` : "none",
+                            borderBottom: allDay ? `1px solid ${event.quiet ? "#e2e8f0" : "#cbd5e1"}` : "none",
+                            borderRadius: allDay && segment.multiDay ? `${segment.starts ? 999 : 0}px ${segment.ends ? 999 : 0}px ${segment.ends ? 999 : 0}px ${segment.starts ? 999 : 0}px` : 7,
+                            marginLeft: allDay && segment.multiDay && !segment.starts ? -10 : 0,
+                            marginRight: allDay && segment.multiDay && !segment.ends ? -10 : 0,
+                            padding: allDay ? "3px 8px" : "3px 6px",
+                            color: event.quiet ? "#64748b" : "#334155",
+                            fontSize: 11,
+                            fontWeight: allDay ? 850 : 750,
+                            minHeight: 22,
+                            boxShadow: allDay && segment.multiDay ? "inset 0 0 0 1px rgba(100,116,139,.08)" : "none",
+                          }}
+                        >
+                          {!allDay && event.uhrzeit && <span style={{ color: "#64748b", fontWeight: 900 }}>{event.uhrzeit} </span>}
+                          {allDay && segment.multiDay && !segment.starts ? "" : event.titel}
+                        </div>
+                      );
+                    })}
+                    {dayEvents.length > visibleDayEvents.length && <div className="calendar-day-event" style={{ color: "#64748b", fontSize: 11, fontWeight: 800, paddingLeft: 2 }}>+{dayEvents.length - visibleDayEvents.length} weitere</div>}
                   </div>
                 </button>
               );
