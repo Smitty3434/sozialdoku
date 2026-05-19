@@ -73,7 +73,14 @@ const DETAIL_RETURN_VIEWS = new Set([
   "nutzer",
   "kibericht",
 ]);
-const normalizeDetailReturnView = (returnView) => DETAIL_RETURN_VIEWS.has(returnView) ? returnView : DETAIL_RETURN_FALLBACK;
+const DETAIL_RETURN_ALIASES = {
+  reminders: "benachrichtigungen",
+  calendar: "kalender",
+};
+const normalizeDetailReturnView = (returnView) => {
+  const normalized = DETAIL_RETURN_ALIASES[returnView] || returnView;
+  return DETAIL_RETURN_VIEWS.has(normalized) ? normalized : DETAIL_RETURN_FALLBACK;
+};
 
 const FACHBEREICH_LABELS = {
   soziales: "Soziales",
@@ -1361,8 +1368,8 @@ function AppContent() {
             )}
             {view === "detail" && selectedClient && !canViewClient(selectedClient.id) && <AccessDeniedView setView={setView} />}
             {view === "notizen" && <NotizenView notizen={visibleNotizen} onAdd={addNotiz} onUpdate={updateNotiz} onDelete={deleteNotiz} user={user} clients={visibleClients} showToast={showToast} />}
-            {view === "kalender" && <KalenderView termine={visibleTermine} outlookConnection={outlookConnection} outlookEvents={outlookEvents} outlookEventsLoading={outlookEventsLoading} outlookEventsError={outlookEventsError} outlookRelevantOnly={outlookRelevantOnly} setOutlookRelevantOnly={setOutlookRelevantOnly} onLoadOutlookEvents={(relevantOnly = outlookRelevantOnly) => loadOutlookEvents(relevantOnly, false)} onImportTermine={importTermine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} onConnectOutlook={startOutlookConnect} onRefreshOutlook={refreshOutlookStatus} onSyncOutlookTermin={syncOutlookTermin} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} />}
-            {view === "benachrichtigungen" && <BenachrichtigungenView termine={visibleTermine} clients={visibleClients} onOpenClient={(c) => openClientDetail(c, "benachrichtigungen")} />}
+            {view === "kalender" && <KalenderView termine={visibleTermine} outlookConnection={outlookConnection} outlookEvents={outlookEvents} outlookEventsLoading={outlookEventsLoading} outlookEventsError={outlookEventsError} outlookRelevantOnly={outlookRelevantOnly} setOutlookRelevantOnly={setOutlookRelevantOnly} onLoadOutlookEvents={(relevantOnly = outlookRelevantOnly) => loadOutlookEvents(relevantOnly, false)} onImportTermine={importTermine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} onConnectOutlook={startOutlookConnect} onRefreshOutlook={refreshOutlookStatus} onSyncOutlookTermin={syncOutlookTermin} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} onOpenClient={(c) => openClientDetail(c, "calendar")} />}
+            {view === "benachrichtigungen" && <BenachrichtigungenView termine={visibleTermine} clients={visibleClients} onOpenClient={(c) => openClientDetail(c, "reminders")} />}
             {view === "vorlagen" && <VorlagenView vorlagen={VORLAGEN} />}
             {view === "stunden" && <StundenView clients={visibleClients} eintraege={eintraege} />}
             {view === "kibericht" && <KIBerichtView clients={visibleClients} eintraege={eintraege} user={user} kiSettings={kiSettings} />}
@@ -2679,7 +2686,7 @@ function DetailView({ client, eintraege, onBack, onNewEintrag, onKiBericht, canE
   );
 }
 
-function KalenderView({ termine, outlookConnection, outlookEvents, outlookEventsLoading, outlookEventsError, outlookRelevantOnly, setOutlookRelevantOnly, onLoadOutlookEvents, onImportTermine, onAddTermin, onDeleteTermin, onUpdateTerminStatus, onConnectOutlook, onRefreshOutlook, onSyncOutlookTermin, canEditTermin, clients, user, showToast }) {
+function KalenderView({ termine, outlookConnection, outlookEvents, outlookEventsLoading, outlookEventsError, outlookRelevantOnly, setOutlookRelevantOnly, onLoadOutlookEvents, onImportTermine, onAddTermin, onDeleteTermin, onUpdateTerminStatus, onConnectOutlook, onRefreshOutlook, onSyncOutlookTermin, canEditTermin, clients, user, showToast, onOpenClient }) {
   const [showNew, setShowNew] = useState(false);
   const initialTerminForm = { titel: "", datum: ds(new Date()), uhrzeit: "09:00", klientId: "", fachkraft: user?.name || "", ort: "", notiz: "", erinnerung: false, outlookSync: false };
   const [form, setForm] = useState(initialTerminForm);
@@ -2714,6 +2721,9 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
   const upcomingTermine = sorted.filter(t => (getTerminEndDate(t) || t.datum) >= today && t.status !== "erledigt" && t.status !== "abgesagt");
   const archivedTermine = sorted.filter(t => (getTerminEndDate(t) || t.datum) < today || t.status === "erledigt" || t.status === "abgesagt");
   const getKlient = (id) => clients.find(c => c.id == id);
+  const ClientLink = ({ client }) => client ? (
+    <button type="button" onClick={() => onOpenClient?.(client)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "#1a4480", padding: 0, fontFamily: "'DM Sans',sans-serif", fontWeight: 700 }}>👤 {client.name}</button>
+  ) : null;
   const monthStart = startOfMonth(monthCursor);
   const monthEnd = endOfMonth(monthCursor);
   const minMonthStart = startOfMonth(new Date());
@@ -2869,7 +2879,7 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
                     </div>
                   </div>
                   <p style={{ margin: "3px 0", fontSize: 12, color: "#64748b" }}>{formatTerminDateRange(t)} · {t.uhrzeit || "ganztägig"}{t.ort ? ` · ${t.ort}` : ""}</p>
-                  {k && <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}>👤 {k.name}</p>}
+                  {k && <p style={{ margin: "2px 0", fontSize: 12, color: "#64748b" }}><button type="button" onClick={() => onOpenClient(k)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: "#1a4480", padding: 0, fontFamily: "'DM Sans',sans-serif", fontWeight: 700 }}>👤 {k.name}</button></p>}
                   {t.erinnerung && <span style={{ fontSize: 11, color: "#f59e0b" }}>🔔 Erinnerung aktiv</span>}
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
                     <OutlookSyncBadge termin={t} />
@@ -3031,7 +3041,8 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
                           <p style={{ ...recordTitleStyle, margin: 0 }}>{event.titel}</p>
                           <span style={{ ...statusChipStyle, background: event.quiet ? "#f8fafc" : event.source === "outlook" ? "#eff6ff" : "#f8fafc", borderColor: event.quiet ? "#e2e8f0" : event.source === "outlook" ? "#bfdbfe" : "#cbd5e1", color: event.quiet ? "#94a3b8" : event.source === "outlook" ? "#1e3a8a" : "#475569" }}>{event.quiet ? "Ferien / Feiertag" : event.source === "outlook" ? "Outlook" : event.status}</span>
                         </div>
-                        <p style={{ ...recordMetaStyle, marginTop: 4 }}>{[formatTerminDateRange(event), event.ort, k?.name].filter(Boolean).join(" · ")}</p>
+                        <p style={{ ...recordMetaStyle, marginTop: 4 }}>{[formatTerminDateRange(event), event.ort].filter(Boolean).join(" · ")}</p>
+                        {k && <ClientLink client={k} />}
                       </div>
                     </div>
                   );
@@ -3051,7 +3062,8 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
               <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "11px 0", borderBottom: "1px solid #f1f5f9", flexWrap: "wrap" }}>
                 <div style={{ minWidth: 0 }}>
                   <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: "#1e293b" }}>{t.titel}</p>
-                  <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{formatTerminDateRange(t)} {t.uhrzeit || ""}{k ? ` · ${k.name}` : ""}{t.ort ? ` · ${t.ort}` : ""}</p>
+                  <p style={{ margin: "3px 0 0", fontSize: 12, color: "#64748b" }}>{formatTerminDateRange(t)} {t.uhrzeit || ""}{t.ort ? ` · ${t.ort}` : ""}</p>
+                  {k && <ClientLink client={k} />}
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
                     <OutlookSyncBadge termin={t} />
                     {canEditTermin?.(t) && t.outlook_sync_status !== "synced" && <button type="button" onClick={() => onSyncOutlookTermin?.(t.id)} style={{ ...btnSecondary, fontSize: 11, padding: "3px 8px" }}>Outlook synchronisieren</button>}
@@ -3130,7 +3142,8 @@ function KalenderView({ termine, outlookConnection, outlookEvents, outlookEvents
                     </div>
                     <div style={{ minWidth: 0 }}>
                       <p style={{ ...recordTitleStyle, margin: 0 }}>{t.titel}</p>
-                      <p style={{ ...recordMetaStyle, marginTop: 4 }}>{[t.ort, k?.name].filter(Boolean).join(" · ") || "Allgemeiner Termin"}</p>
+                      <p style={{ ...recordMetaStyle, marginTop: 4 }}>{t.ort || "Allgemeiner Termin"}</p>
+                      {k && <ClientLink client={k} />}
                       {t.notiz && <p style={{ ...recordTextStyle, marginTop: 5 }}>{t.notiz.length > 180 ? `${t.notiz.slice(0, 180)}…` : t.notiz}</p>}
                     </div>
                     <StatusControl termin={t} />

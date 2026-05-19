@@ -83,9 +83,17 @@ assert.match(source, />Demo-Fachkraft</, "Login screen must show demo user hint"
 assert.doesNotMatch(source, /history\.back|window\.history|navigate\(-1\)/, "Back navigation must not use browser history");
 assert.match(source, /const DETAIL_RETURN_FALLBACK = "clients"/, "Detail navigation must define an internal fallback view");
 assert.match(source, /const DETAIL_RETURN_VIEWS = new Set\(/, "Detail navigation must validate allowed in-app return views");
+assert.match(source, /const DETAIL_RETURN_ALIASES = \{[\s\S]*reminders:\s*"benachrichtigungen"[\s\S]*calendar:\s*"kalender"/, "Detail navigation must map user-facing origins to internal views");
 assert.match(source, /const normalizeDetailReturnView = \(returnView\) =>/, "Detail navigation must normalize the stored origin");
 assert.match(source, /const handleDetailBack = \(\) => \{[\s\S]*setView\(normalizeDetailReturnView\(detailReturnView\)\)/, "Detail back button must use normalized in-app navigation");
 assert.doesNotMatch(source, /onBack=\{\(\) => setView\(detailReturnView \|\| "clients"\)\}/, "Detail back button must not directly jump to unvalidated state");
+assert.equal([...source.matchAll(/setView\("detail"\)/g)].length, 1, "Only the central openClientDetail wrapper may switch into detail view");
+assert.match(source, /view === "dashboard"[\s\S]*onOpenClient=\{\(c\) => openClientDetail\(c, "dashboard"\)\}/, "Dashboard must open details with dashboard origin");
+assert.match(source, /view === "clients"[\s\S]*onSelect=\{\(c\) => openClientDetail\(c, "clients"\)\}/, "Fallakten list must open details with clients origin");
+assert.match(source, /view === "kalender"[\s\S]*onOpenClient=\{\(c\) => openClientDetail\(c, "calendar"\)\}/, "Calendar must open details with calendar origin");
+assert.match(source, /view === "benachrichtigungen"[\s\S]*onOpenClient=\{\(c\) => openClientDetail\(c, "reminders"\)\}/, "Reminders must open details with reminders origin");
+assert.match(source, /function KalenderView\(\{[\s\S]*onOpenClient[\s\S]*\}\)/, "Calendar view must receive the central client opener");
+assert.match(source, /onClick=\{\(\) => onOpenClient\(k\)\}[\s\S]*👤 \{k\.name\}/, "Calendar client links must use the central client opener");
 
 assert.match(source, /provider:\s*"ollama"/, "KI settings must default to the local Ollama provider");
 assert.match(source, /provider",\s*"deepseek"/, "KI provider settings must allow selecting DeepSeek API");
