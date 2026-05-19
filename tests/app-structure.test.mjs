@@ -2,6 +2,9 @@ import fs from "node:fs";
 import assert from "node:assert/strict";
 
 const source = fs.readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+const deepseekFunctionSource = fs.existsSync(new URL("../supabase/functions/deepseek-rewrite/index.ts", import.meta.url))
+  ? fs.readFileSync(new URL("../supabase/functions/deepseek-rewrite/index.ts", import.meta.url), "utf8")
+  : "";
 
 function objectKeys(constName) {
   const match = source.match(new RegExp(`const ${constName} = \\{([\\s\\S]*?)\\n\\};`));
@@ -76,3 +79,13 @@ assert.match(source, /const DEMO_LOGIN = \{ email: "test@deinprojekt\.de", passw
 assert.match(source, /const \[email,\s*setEmail\]\s*=\s*useState\(DEMO_LOGIN\.email\)/, "Login email field must be prefilled with demo email");
 assert.match(source, /const \[pass,\s*setPass\]\s*=\s*useState\(DEMO_LOGIN\.password\)/, "Login password field must be prefilled with demo password");
 assert.match(source, />Demo-Fachkraft</, "Login screen must show demo user hint");
+
+assert.match(source, /provider:\s*"ollama"/, "KI settings must default to the local Ollama provider");
+assert.match(source, /provider",\s*"deepseek"/, "KI provider settings must allow selecting DeepSeek API");
+assert.match(source, /supabase\.functions\.invoke\("deepseek-rewrite"/, "DeepSeek rewriting must be called through a Supabase Edge Function");
+assert.doesNotMatch(source, /DEEPSEEK_API_KEY|api\.deepseek\.com|Authorization":\s*`Bearer/, "Frontend must not contain DeepSeek secrets or direct DeepSeek API calls");
+
+assert.match(deepseekFunctionSource, /Deno\.env\.get\("DEEPSEEK_API_KEY"\)/, "DeepSeek Edge Function must read DEEPSEEK_API_KEY from Supabase Secrets");
+assert.match(deepseekFunctionSource, /https:\/\/api\.deepseek\.com\/chat\/completions/, "DeepSeek Edge Function must call the DeepSeek API server-side");
+assert.match(deepseekFunctionSource, /auth\.getUser\(\)/, "DeepSeek Edge Function must require an authenticated Supabase user");
+assert.match(deepseekFunctionSource, /rewriteMode/, "DeepSeek Edge Function must accept a rewrite mode");

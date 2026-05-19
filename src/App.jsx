@@ -391,7 +391,7 @@ function AppContent() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [notizPanel, setNotizPanel] = useState(false);
   const [kiSettings, setKiSettings] = useState({
-    provider: "anthropic",
+    provider: "ollama",
     ollamaUrl: "http://localhost:11434",
     ollamaModel: "llama3",
     anonymisierung: true,
@@ -918,11 +918,6 @@ function AppContent() {
       showToast("Bitte zuerst Dokumentationstext eingeben.", "#c0392b");
       return;
     }
-    if (kiSettings.provider !== "ollama") {
-      showToast("KI-Korrektur ist aktuell über die lokale Ollama-KI angebunden.", "#c0392b");
-      return;
-    }
-
     const prompt = [
       "Du korrigierst eine sozialpädagogische Dokumentation ausschließlich sprachlich.",
       "Korrigiere Rechtschreibung, Grammatik und leichte sprachliche Unklarheiten.",
@@ -935,14 +930,28 @@ function AppContent() {
     setKiCorrecting(true);
     setKiCorrection(null);
     try {
-      const res = await fetch(`${kiSettings.ollamaUrl}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: kiSettings.ollamaModel, prompt, stream: false })
-      });
-      if (!res.ok) throw new Error(`Ollama antwortet mit HTTP ${res.status}.`);
-      const data = await res.json();
-      const corrected = (data.response || "").trim();
+      let corrected = "";
+      if (kiSettings.provider === "deepseek") {
+        const { data, error } = await supabase.functions.invoke("deepseek-rewrite", {
+          body: {
+            text: newEintrag.text,
+            rewriteMode: "spelling_grammar",
+          },
+        });
+        if (error || data?.error) throw new Error(data?.error || error?.message || "DeepSeek-Korrektur fehlgeschlagen.");
+        corrected = (data?.corrected || "").trim();
+      } else if (kiSettings.provider === "ollama") {
+        const res = await fetch(`${kiSettings.ollamaUrl}/api/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: kiSettings.ollamaModel, prompt, stream: false })
+        });
+        if (!res.ok) throw new Error(`Ollama antwortet mit HTTP ${res.status}.`);
+        const data = await res.json();
+        corrected = (data.response || "").trim();
+      } else {
+        throw new Error("Bitte wähle in den KI-Einstellungen Ollama oder DeepSeek API aus.");
+      }
       if (!corrected) throw new Error("Keine KI-Antwort erhalten.");
       setKiCorrection({ corrected });
     } catch (error) {
@@ -3554,11 +3563,15 @@ function KIBerichtView({ clients, eintraege, user, kiSettings }) {
       return data.response;
     }
 
-    return `Hinweis: In dieser lokalen Demo ist Anthropic nicht vollständig mit einem echten API-Schlüssel verbunden.\n\nBitte nutze für echte Tests den Provider "Ollama".\n\nBeispielentwurf für ${berichtstyp}:\n\nIm Berichtszeitraum fanden ${clientEintraege.length} dokumentierte Kontakte bzw. Einträge statt. Die Zusammenarbeit mit ${selectedClient?.name || "der Klientin / dem Klienten"} verlief überwiegend geordnet. Die aktuelle Situation wurde anhand der vorliegenden Falldokumentation eingeschätzt. Weitere fachliche Bewertung und Empfehlungen sind vor Versand durch die zuständige Fachkraft zu prüfen und bei Bedarf zu ergänzen.`;
+    return `Hinweis: Externe Berichtserstellung ist in dieser lokalen Demo nicht vollständig angebunden.\n\nBitte nutze für echte Tests den Provider "Ollama".\n\nBeispielentwurf für ${berichtstyp}:\n\nIm Berichtszeitraum fanden ${clientEintraege.length} dokumentierte Kontakte bzw. Einträge statt. Die Zusammenarbeit mit ${selectedClient?.name || "der Klientin / dem Klienten"} verlief überwiegend geordnet. Die aktuelle Situation wurde anhand der vorliegenden Falldokumentation eingeschätzt. Weitere fachliche Bewertung und Empfehlungen sind vor Versand durch die zuständige Fachkraft zu prüfen und bei Bedarf zu ergänzen.`;
   };
 
   const generateBericht = async () => {
     if (!selectedClient) return;
+    if (kiSettings.provider === "deepseek") {
+      setError("DeepSeek API ist aktuell nur für Rechtschreibung, Grammatik und sachliche Glättung von Dokumentation aktiviert.");
+      return;
+    }
     setLoading(true);
     setError(null);
     setBericht("");
@@ -3596,7 +3609,7 @@ function KIBerichtView({ clients, eintraege, user, kiSettings }) {
 
   const providerInfo = kiSettings.provider === "ollama"
     ? { color: "#166534", bg: "#dcfce7", icon: "🏠", label: `Lokale KI · ${kiSettings.ollamaModel}`, sub: `Server: ${kiSettings.ollamaUrl}` }
-    : { color: "#1d4ed8", bg: "#dbeafe", icon: "☁️", label: "Anthropic / Cloud-Demo", sub: kiSettings.anonymisierung ? "Anonymisierung aktiv" : "Anonymisierung deaktiviert" };
+    : { color: "#1d4ed8", bg: "#dbeafe", icon: "☁️", label: "DeepSeek API", sub: "Nur Textkorrektur und Glättung" };
 
   return (
     <div>
@@ -4023,25 +4036,25 @@ function KIEinstellungenView({ kiSettings, setKiSettings, showToast }) {
   return (
     <div>
       <h1 style={pageTitle}>KI-Einstellungen</h1>
-      <p style={pageSubtitle}>Konfiguriere welche KI für die Berichtserstellung verwendet wird.</p>
+      <p style={pageSubtitle}>Konfiguriere welche KI für Textkorrektur und Berichtserstellung verwendet wird.</p>
 
       {/* Provider-Auswahl */}
       <div style={card}>
         <h2 style={cardTitle}>🤖 KI-Anbieter</h2>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 8 }} className="dash-grid">
 
-          {/* Anthropic */}
-          <div onClick={() => set("provider", "anthropic")} style={{ border: `2px solid ${form.provider === "anthropic" ? "#6d28d9" : "#e2e8f0"}`, borderRadius: 14, padding: "20px 22px", cursor: "pointer", background: form.provider === "anthropic" ? "#faf9ff" : "#fff", transition: "all .2s" }}>
+          {/* DeepSeek */}
+          <div onClick={() => set("provider", "deepseek")} style={{ border: `2px solid ${form.provider === "deepseek" ? "#1d4ed8" : "#e2e8f0"}`, borderRadius: 14, padding: "20px 22px", cursor: "pointer", background: form.provider === "deepseek" ? "#eff6ff" : "#fff", transition: "all .2s" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
               <span style={{ fontSize: 32 }}>☁️</span>
-              {form.provider === "anthropic" && <span style={{ background: "#6d28d9", color: "#fff", fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20 }}>Aktiv</span>}
+              {form.provider === "deepseek" && <span style={{ background: "#1d4ed8", color: "#fff", fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 20 }}>Aktiv</span>}
             </div>
-            <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#0f2647" }}>Anthropic Claude API</h3>
-            <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.6 }}>Hochwertige KI über das Internet. Beste Textqualität für Berichte.</p>
+            <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 700, color: "#0f2647" }}>DeepSeek API</h3>
+            <p style={{ margin: 0, fontSize: 13, color: "#64748b", lineHeight: 1.6 }}>Serverseitige Textkorrektur über Supabase Edge Function. Geeignet für Rechtschreibung, Grammatik und sachliche Glättung.</p>
             <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 4 }}>
-              <span style={{ fontSize: 12, color: "#d97706" }}>⚠️ Daten verlassen den Server</span>
-              <span style={{ fontSize: 12, color: "#16a34a" }}>✅ Mit Anonymisierung DSGVO-konform</span>
-              <span style={{ fontSize: 12, color: "#16a34a" }}>✅ Kein Setup nötig</span>
+              <span style={{ fontSize: 12, color: "#d97706" }}>⚠️ Text wird an DeepSeek gesendet</span>
+              <span style={{ fontSize: 12, color: "#16a34a" }}>✅ API-Key nur serverseitig</span>
+              <span style={{ fontSize: 12, color: "#16a34a" }}>✅ Keine inhaltliche Erweiterung</span>
             </div>
           </div>
 
@@ -4118,7 +4131,7 @@ function KIEinstellungenView({ kiSettings, setKiSettings, showToast }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "16px 0", borderBottom: "1px solid #f1f5f9" }}>
           <div style={{ flex: 1, paddingRight: 20 }}>
             <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: "#1e293b" }}>Datenanonymisierung</p>
-            <p style={{ margin: "4px 0 0", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>Name, Geburtsdatum und Aktenzeichen werden vor dem Senden an eine externe KI durch Platzhalter ersetzt. Im fertigen Bericht werden sie wieder eingesetzt. <strong>Empfohlen bei Anthropic.</strong></p>
+            <p style={{ margin: "4px 0 0", fontSize: 13, color: "#64748b", lineHeight: 1.5 }}>Name, Geburtsdatum und Aktenzeichen werden vor dem Senden an eine externe KI durch Platzhalter ersetzt. Im fertigen Bericht werden sie wieder eingesetzt. <strong>Empfohlen bei externen KI-Providern.</strong></p>
             {form.provider === "ollama" && <p style={{ margin: "6px 0 0", fontSize: 12, color: "#16a34a" }}>✅ Bei lokaler KI nicht nötig — Daten verlassen den Server nicht.</p>}
           </div>
           <div onClick={() => set("anonymisierung", !form.anonymisierung)} style={{ width: 48, height: 26, borderRadius: 13, background: form.anonymisierung ? "#16a34a" : "#e2e8f0", cursor: "pointer", position: "relative", transition: "background .2s", flexShrink: 0 }}>
@@ -4132,8 +4145,8 @@ function KIEinstellungenView({ kiSettings, setKiSettings, showToast }) {
             {form.provider === "ollama"
               ? <><strong>Vollständig DSGVO-konform:</strong> Lokale KI, keine Daten verlassen den Server.</>
               : form.anonymisierung
-              ? <><strong>DSGVO-konform:</strong> Anonymisierung aktiv. Echte Personendaten werden nicht an Anthropic gesendet.</>
-              : <><strong>Achtung:</strong> Anonymisierung deaktiviert. Echte Klientendaten werden an Anthropic Server in den USA gesendet. Nur mit AVV empfohlen.</>
+              ? <><strong>DSGVO-konform:</strong> Anonymisierung aktiv. Echte Personendaten werden nicht an externe KI-Provider gesendet.</>
+              : <><strong>Achtung:</strong> Anonymisierung deaktiviert. Echte Klientendaten werden an externe KI-Provider gesendet. Nur mit passender Datenschutzgrundlage empfohlen.</>
             }
           </div>
         </div>
