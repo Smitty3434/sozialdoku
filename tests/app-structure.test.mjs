@@ -85,9 +85,14 @@ assert.match(source, /const DETAIL_RETURN_FALLBACK = "clients"/, "Detail navigat
 assert.match(source, /const DETAIL_RETURN_VIEWS = new Set\(/, "Detail navigation must validate allowed in-app return views");
 assert.match(source, /const DETAIL_RETURN_ALIASES = \{[\s\S]*reminders:\s*"benachrichtigungen"[\s\S]*calendar:\s*"kalender"/, "Detail navigation must map user-facing origins to internal views");
 assert.match(source, /const normalizeDetailReturnView = \(returnView\) =>/, "Detail navigation must normalize the stored origin");
-assert.match(source, /const handleDetailBack = \(\) => \{[\s\S]*setView\(normalizeDetailReturnView\(detailReturnView\)\)/, "Detail back button must use normalized in-app navigation");
+assert.match(source, /const lastNonDetailViewRef = useRef\("dashboard"\)/, "Navigation must remember the last non-detail in-app view");
+assert.match(source, /const navigateToView = \(nextView\) => \{[\s\S]*lastNonDetailViewRef\.current = normalizedView[\s\S]*setSelectedClient\(null\)[\s\S]*setView\(normalizedView\)/, "Non-detail navigation must clear stale detail state and remember the current app view");
+assert.match(source, /const handleDetailBack = \(\) => \{[\s\S]*const targetView = normalizeDetailReturnView\(detailReturnView \|\| lastNonDetailViewRef\.current\)[\s\S]*setView\(targetView\)/, "Detail back button must use normalized in-app navigation");
 assert.doesNotMatch(source, /onBack=\{\(\) => setView\(detailReturnView \|\| "clients"\)\}/, "Detail back button must not directly jump to unvalidated state");
 assert.equal([...source.matchAll(/setView\("detail"\)/g)].length, 1, "Only the central openClientDetail wrapper may switch into detail view");
+assert.match(source, /<Sidebar[\s\S]*setView=\{\(v\) => \{ navigateToView\(v\); setSidebarOpen\(false\); \}\}/, "Sidebar navigation must go through central in-app navigation");
+assert.match(source, /<Dashboard[\s\S]*setView=\{navigateToView\}/, "Dashboard list links must go through central in-app navigation");
+assert.match(source, /<AccessDeniedView setView=\{navigateToView\}/, "Access denied fallback must stay inside central in-app navigation");
 assert.match(source, /view === "dashboard"[\s\S]*onOpenClient=\{\(c\) => openClientDetail\(c, "dashboard"\)\}/, "Dashboard must open details with dashboard origin");
 assert.match(source, /view === "clients"[\s\S]*onSelect=\{\(c\) => openClientDetail\(c, "clients"\)\}/, "Fallakten list must open details with clients origin");
 assert.match(source, /view === "kalender"[\s\S]*onOpenClient=\{\(c\) => openClientDetail\(c, "calendar"\)\}/, "Calendar must open details with calendar origin");

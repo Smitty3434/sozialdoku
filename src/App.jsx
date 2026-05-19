@@ -377,6 +377,7 @@ function AppContent() {
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState("dashboard");
   const [detailReturnView, setDetailReturnView] = useState("clients");
+  const lastNonDetailViewRef = useRef("dashboard");
   const [clients, setClients] = useState([]);
   const [eintraege, setEintraege] = useState({});
   const [fallakten, setFallakten] = useState({});
@@ -453,15 +454,26 @@ function AppContent() {
     showToast(message, "#c0392b");
     return false;
   };
+  const navigateToView = (nextView) => {
+    const normalizedView = DETAIL_RETURN_ALIASES[nextView] || nextView || DETAIL_RETURN_FALLBACK;
+    if (normalizedView !== "detail") {
+      lastNonDetailViewRef.current = normalizedView;
+      setSelectedClient(null);
+    }
+    setView(normalizedView);
+  };
   const openClientDetail = (client, returnView = view) => {
     if (!client) return;
+    const origin = normalizeDetailReturnView(returnView || lastNonDetailViewRef.current);
     setSelectedClient(client);
-    setDetailReturnView(normalizeDetailReturnView(returnView));
+    setDetailReturnView(origin);
     setView("detail");
   };
   const handleDetailBack = () => {
+    const targetView = normalizeDetailReturnView(detailReturnView || lastNonDetailViewRef.current);
     setSelectedClient(null);
-    setView(normalizeDetailReturnView(detailReturnView));
+    lastNonDetailViewRef.current = targetView;
+    setView(targetView);
   };
 
   // ── Profil laden ────────────────────────────────────────────────
@@ -1332,7 +1344,7 @@ function AppContent() {
 
       <div className="app-layout">
         {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
-        <Sidebar view={view} setView={(v) => { setView(v); setSidebarOpen(false); }} user={user} onLogout={async () => { await supabase.auth.signOut(); }} isOpen={sidebarOpen} notifications={upcomingReminders.length} permissions={permissions} />
+        <Sidebar view={view} setView={(v) => { navigateToView(v); setSidebarOpen(false); }} user={user} onLogout={async () => { await supabase.auth.signOut(); }} isOpen={sidebarOpen} notifications={upcomingReminders.length} permissions={permissions} />
 
         <div className="main-wrapper">
           <div className="mobile-header">
@@ -1342,7 +1354,7 @@ function AppContent() {
           </div>
 
           <main className="main-content">
-            {view === "dashboard" && <Dashboard clients={visibleClients} fallakten={fallakten} eintraege={eintraege} termine={visibleTermine} setView={setView} onOpenClient={(c) => openClientDetail(c, "dashboard")} user={user} permissions={permissions} />}
+            {view === "dashboard" && <Dashboard clients={visibleClients} fallakten={fallakten} eintraege={eintraege} termine={visibleTermine} setView={navigateToView} onOpenClient={(c) => openClientDetail(c, "dashboard")} user={user} permissions={permissions} />}
             {view === "clients" && <ClientsView clients={filteredClients} allClients={visibleClients} search={search} setSearch={setSearch} statusFilter={clientStatusFilter} setStatusFilter={setClientStatusFilter} einrichtungFilter={clientEinrichtungFilter} setEinrichtungFilter={setClientEinrichtungFilter} internFilter={clientInternFilter} setInternFilter={setClientInternFilter} einrichtungen={visibleEinrichtungen} internOptions={visibleInternOptions} permissions={permissions} onSelect={(c) => openClientDetail(c, "clients")} onNew={permissions.canCreateClient ? () => setShowNewClient(true) : null} />}
             {view === "detail" && selectedClient && canViewClient(selectedClient.id) && (
               <DetailView
@@ -1352,7 +1364,7 @@ function AppContent() {
                 canEdit={selectedClientCanEdit}
                 permissions={permissions}
                 onNewEintrag={selectedClientCanEdit ? openNewEintrag : null}
-                onKiBericht={() => setView("kibericht")}
+                onKiBericht={() => navigateToView("kibericht")}
                 notizen={visibleNotizen}
                 termine={visibleTermine}
                 auditLogs={auditLogs}
@@ -1366,7 +1378,7 @@ function AppContent() {
                 setEintraege={setEintraege}
               />
             )}
-            {view === "detail" && selectedClient && !canViewClient(selectedClient.id) && <AccessDeniedView setView={setView} />}
+            {view === "detail" && selectedClient && !canViewClient(selectedClient.id) && <AccessDeniedView setView={navigateToView} />}
             {view === "notizen" && <NotizenView notizen={visibleNotizen} onAdd={addNotiz} onUpdate={updateNotiz} onDelete={deleteNotiz} user={user} clients={visibleClients} showToast={showToast} />}
             {view === "kalender" && <KalenderView termine={visibleTermine} outlookConnection={outlookConnection} outlookEvents={outlookEvents} outlookEventsLoading={outlookEventsLoading} outlookEventsError={outlookEventsError} outlookRelevantOnly={outlookRelevantOnly} setOutlookRelevantOnly={setOutlookRelevantOnly} onLoadOutlookEvents={(relevantOnly = outlookRelevantOnly) => loadOutlookEvents(relevantOnly, false)} onImportTermine={importTermine} onAddTermin={addTermin} onDeleteTermin={deleteTermin} onUpdateTerminStatus={updateTerminStatus} onConnectOutlook={startOutlookConnect} onRefreshOutlook={refreshOutlookStatus} onSyncOutlookTermin={syncOutlookTermin} canEditTermin={canEditTermin} clients={visibleClients} user={user} showToast={showToast} onOpenClient={(c) => openClientDetail(c, "calendar")} />}
             {view === "benachrichtigungen" && <BenachrichtigungenView termine={visibleTermine} clients={visibleClients} onOpenClient={(c) => openClientDetail(c, "reminders")} />}
@@ -1394,7 +1406,7 @@ function AppContent() {
                 <p style={{ margin: "3px 0 0", fontSize: 12, color: "#475569", lineHeight: 1.5 }}>{(n.text || "").length > 80 ? n.text.slice(0, 80) + "…" : n.text}</p>
               </div>
             ))}
-            <button onClick={() => { setView("notizen"); setNotizPanel(false); setSidebarOpen(false); }} style={{ ...btnSecondary, width: "100%", justifyContent: "center", fontSize: 13, marginTop: 4 }}>Alle Notizen öffnen →</button>
+            <button onClick={() => { navigateToView("notizen"); setNotizPanel(false); setSidebarOpen(false); }} style={{ ...btnSecondary, width: "100%", justifyContent: "center", fontSize: 13, marginTop: 4 }}>Alle Notizen öffnen →</button>
           </div>
         </div>
       )}
