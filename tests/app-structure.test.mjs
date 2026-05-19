@@ -80,6 +80,13 @@ assert.match(source, /const \[email,\s*setEmail\]\s*=\s*useState\(DEMO_LOGIN\.em
 assert.match(source, /const \[pass,\s*setPass\]\s*=\s*useState\(DEMO_LOGIN\.password\)/, "Login password field must be prefilled with demo password");
 assert.match(source, />Demo-Fachkraft</, "Login screen must show demo user hint");
 
+assert.doesNotMatch(source, /history\.back|window\.history|navigate\(-1\)/, "Back navigation must not use browser history");
+assert.match(source, /const DETAIL_RETURN_FALLBACK = "clients"/, "Detail navigation must define an internal fallback view");
+assert.match(source, /const DETAIL_RETURN_VIEWS = new Set\(/, "Detail navigation must validate allowed in-app return views");
+assert.match(source, /const normalizeDetailReturnView = \(returnView\) =>/, "Detail navigation must normalize the stored origin");
+assert.match(source, /const handleDetailBack = \(\) => \{[\s\S]*setView\(normalizeDetailReturnView\(detailReturnView\)\)/, "Detail back button must use normalized in-app navigation");
+assert.doesNotMatch(source, /onBack=\{\(\) => setView\(detailReturnView \|\| "clients"\)\}/, "Detail back button must not directly jump to unvalidated state");
+
 assert.match(source, /provider:\s*"ollama"/, "KI settings must default to the local Ollama provider");
 assert.match(source, /provider",\s*"deepseek"/, "KI provider settings must allow selecting DeepSeek API");
 assert.match(source, /supabase\.functions\.invoke\("deepseek-rewrite"/, "DeepSeek rewriting must be called through a Supabase Edge Function");

@@ -62,6 +62,18 @@ const NOTIZ_FARBEN = {
 };
 const AUFGABEN_STATUS = ["offen", "in_bearbeitung", "erledigt"];
 const TERMIN_STATUS = ["geplant", "erledigt", "abgesagt"];
+const DETAIL_RETURN_FALLBACK = "clients";
+const DETAIL_RETURN_VIEWS = new Set([
+  "dashboard",
+  "clients",
+  "benachrichtigungen",
+  "kalender",
+  "notizen",
+  "stunden",
+  "nutzer",
+  "kibericht",
+]);
+const normalizeDetailReturnView = (returnView) => DETAIL_RETURN_VIEWS.has(returnView) ? returnView : DETAIL_RETURN_FALLBACK;
 
 const FACHBEREICH_LABELS = {
   soziales: "Soziales",
@@ -437,8 +449,12 @@ function AppContent() {
   const openClientDetail = (client, returnView = view) => {
     if (!client) return;
     setSelectedClient(client);
-    setDetailReturnView(returnView || "clients");
+    setDetailReturnView(normalizeDetailReturnView(returnView));
     setView("detail");
+  };
+  const handleDetailBack = () => {
+    setSelectedClient(null);
+    setView(normalizeDetailReturnView(detailReturnView));
   };
 
   // ── Profil laden ────────────────────────────────────────────────
@@ -1325,7 +1341,7 @@ function AppContent() {
               <DetailView
                 client={selectedClient}
                 eintraege={eintraege[selectedClient.id] || []}
-                onBack={() => setView(detailReturnView || "clients")}
+                onBack={handleDetailBack}
                 canEdit={selectedClientCanEdit}
                 permissions={permissions}
                 onNewEintrag={selectedClientCanEdit ? openNewEintrag : null}
